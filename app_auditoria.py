@@ -359,7 +359,39 @@ def client_management():
     
     # Lista de clientes existentes
     st.subheader("📋 Encargos Existentes")
-    
+    # BOTÓN PARA ELIMINAR TODOS LOS ENCARGOS (solo para limpieza rápida)
+st.markdown("---")
+st.warning("⚠️ Herramienta de administrador: Usa solo si quieres borrar TODOS tus encargos de una vez")
+
+if st.button("🗑️ Eliminar TODOS mis encargos (irreversible)", type="primary"):
+    if st.checkbox("Sí, estoy seguro de borrar TODOS los encargos y sus carpetas"):
+        db = AuditDatabase()
+        cursor = db.conn.cursor()
+        
+        # Borrar todas las carpetas y pasos de auditoría de este usuario
+        cursor.execute("""
+            DELETE FROM audit_steps WHERE folder_id IN (
+                SELECT id FROM folder_structure WHERE client_id IN (
+                    SELECT id FROM clients WHERE user_id = ?
+                )
+            )
+        """, (st.session_state.user_id,))
+        
+        cursor.execute("""
+            DELETE FROM folder_structure WHERE client_id IN (
+                SELECT id FROM clients WHERE user_id = ?
+            )
+        """, (st.session_state.user_id,))
+        
+        # Borrar todos los clientes/encargos del usuario
+        cursor.execute("DELETE FROM clients WHERE user_id = ?", (st.session_state.user_id,))
+        
+        db.conn.commit()
+        
+        st.success("¡Todos los encargos han sido eliminados exitosamente!")
+        st.info("La página se recargará en 3 segundos...")
+        st.rerun()
+st.markdown("---")
     cursor = db.conn.cursor()
     cursor.execute(
         "SELECT id, client_name, audit_year, created_at FROM clients WHERE user_id = ? ORDER BY audit_year DESC, client_name",
@@ -530,3 +562,4 @@ def main_app():
 # Ejecutar la aplicación
 if __name__ == "__main__":
     main_app()
+
