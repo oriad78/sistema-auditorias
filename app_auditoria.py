@@ -309,26 +309,53 @@ def client_management():
     with st.expander("➕ Crear Nuevo Encargo/Cliente", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            client_name = st.text_input("Nombre del Cliente")
+            default_name = "" if getattr(st.session_state, "clear_client_form", False) else st.session_state.get("last_client_name", "")
+    client_name = st.text_input("Nombre del Cliente", value=default_name, key="input_client_name")
         with col2:
-            audit_year = st.number_input("Año de Auditoría", min_value=2000, max_value=2100, value=datetime.now().year)
+            default_year = datetime.now().year if getattr(st.session_state, "clear_client_form", False) else st.session_state.get("last_audit_year", datetime.now().year)
+    audit_year = st.number_input("Año de Auditoría", min_value=2000, max_value=2100, value=default_year, key="input_audit_year")
         
-        if st.button("Crear Encargo"):
-            if client_name:
-                cursor = db.conn.cursor()
-                cursor.execute(
-                    "INSERT INTO clients (user_id, client_name, audit_year) VALUES (?, ?, ?)",
-                    (st.session_state.user_id, client_name, audit_year)
-                )
-                client_id = cursor.lastrowid
-                
-                # Crear estructura base de carpetas
-                base_structure = get_base_structure()
-                create_folder_structure(db, client_id, None, base_structure, 'main')
-                
-                st.success(f"Encargo '{client_name}' creado exitosamente para el año {audit_year}")
-                st.rerun()
-            else:
+        if st.button("Crear Encargo", key="crear_encargo_btn"):
+    if not client_name.strip():
+        st.error("Por favor ingresa un nombre para el cliente")
+    else:
+        # Crear el encargo
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "INSERT INTO clients (user_id, client_name, audit_year) VALUES (?, ?, ?)",
+            (st.session_state.user_id, client_name.strip(), audit_year)
+        )
+        client_id = cursor.lastrowid
+        
+        # Crear estructura de carpetas
+        base_structure = get_base_structure()
+        create_folder_structure(db, client_id, None, base_structure, 'main')
+        
+        db.conn.commit()
+        
+        # Guardar mensaje de éxito en session_state
+        st.session_state.encargo_creado = {
+            "nombre": client_name.strip(),
+            "año": audit_year
+        }
+        
+        # Limpiar los campos
+        st.session_state.clear_client_form = True
+
+# Mostrar mensaje de éxito solo una vez
+if getattr(st.session_state, "encargo_creado", None):
+    info = st.session_state.encargo_creado
+    st.success(f"Encargo '{info['nombre']}' creado exitosamente para el año {info['año']}")
+    st.balloons()  # ¡Animación divertida!
+    
+    # Botón para limpiar el mensaje y seguir creando más
+    if st.button("Crear otro encargo"):
+        st.session_state.encargo_creado = None
+        st.session_state.clear_client_form = True
+        st.rerun()
+    
+    # Opcional: limpiar automáticamente después de 5 segundos
+    # (no es necesario, pero queda bonito)
                 st.error("Por favor ingresa un nombre para el cliente")
     
     # Migrar datos entre años
@@ -530,6 +557,7 @@ def main_app():
 # Ejecutar la aplicación
 if __name__ == "__main__":
     main_app()
+
 
 
 
