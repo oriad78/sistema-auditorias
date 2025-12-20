@@ -359,7 +359,8 @@ def client_management():
     
     # Lista de clientes existentes
     st.subheader("📋 Encargos Existentes")
-       cursor = db.conn.cursor()
+       
+    cursor = db.conn.cursor()
     cursor.execute(
         "SELECT id, client_name, audit_year, created_at FROM clients WHERE user_id = ? ORDER BY audit_year DESC, client_name",
         (st.session_state.user_id,)
@@ -529,6 +530,7 @@ def main_app():
 # Ejecutar la aplicación
 if __name__ == "__main__":
     main_app()
+
 
 
 
