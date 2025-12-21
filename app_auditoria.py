@@ -230,44 +230,59 @@ def client_management():
     else:
         st.info("No hay encargos creados. Usa el formulario arriba para crear tu primer encargo.")
     
-    # === AQUÍ ESTÁ LA SECCIÓN QUE APARECERÁ SÍ O SÍ ===
+        # ================================================
+    # ELIMINAR VARIOS ENCARGOS CON CASILLAS (SIEMPRE VISIBLE)
+    # ================================================
     st.markdown("---")
-    st.subheader("🗑️ Eliminar varios encargos a la vez")
+    st.markdown("<h3 style='text-align: center; color: red;'>🗑️ ELIMINAR VARIOS ENCARGOS A LA VEZ</h3>", unsafe_allow_html=True)
+    st.markdown("**Marca las casillas de los encargos que quieres borrar y confirma abajo**")
     
-    cursor.execute("SELECT id, client_name, audit_year FROM clients WHERE user_id = ? ORDER BY audit_year DESC, client_name", (st.session_state.user_id,))
+    # Usamos el mismo cursor de la lista anterior para no crear nuevos db
+    cursor.execute(
+        "SELECT id, client_name, audit_year FROM clients WHERE user_id = ? ORDER BY audit_year DESC, client_name",
+        (st.session_state.user_id,)
+    )
     all_clients = cursor.fetchall()
     
     if all_clients:
-        st.write("Marca las casillas de los encargos que deseas eliminar:")
-        
         selected_ids = []
-        for client_id, name, year in all_clients:
-            if st.checkbox(f"{name} - Año {year}", key=f"del_multi_{client_id}"):
-                selected_ids.append(client_id)
+        cols = st.columns(3)  # Para que las casillas se vean en columnas bonitas
+        for i, (client_id, name, year) in enumerate(all_clients):
+            with cols[i % 3]:
+                if st.checkbox(f"{name} - Año {year}", key=f"del_multi_{client_id}"):
+                    selected_ids.append(client_id)
         
         if selected_ids:
-            st.warning(f"Has seleccionado **{len(selected_ids)}** encargo(s) para eliminar.")
+            st.markdown(f"**⚠️ Has seleccionado {len(selected_ids)} encargo(s) para eliminar**")
             
-            if st.checkbox("⚠️ Confirmo que quiero eliminarlos permanentemente"):
-                if st.button("🗑️ Eliminar seleccionados", type="primary"):
+            if st.checkbox("**Sí, confirmo que quiero eliminarlos permanentemente (no se puede deshacer)**", key="confirm_multi_delete"):
+                if st.button("🗑️ ELIMINAR LOS ENCARGOS SELECCIONADOS", type="primary", key="btn_multi_delete"):
                     placeholders = ','.join(['?'] * len(selected_ids))
                     
-                    cursor.execute(f"DELETE FROM audit_steps WHERE folder_id IN (SELECT id FROM folder_structure WHERE client_id IN ({placeholders}))", selected_ids)
+                    cursor.execute(f"""
+                        DELETE FROM audit_steps 
+                        WHERE folder_id IN (
+                            SELECT id FROM folder_structure 
+                            WHERE client_id IN ({placeholders})
+                        )
+                    """, selected_ids)
+                    
                     cursor.execute(f"DELETE FROM folder_structure WHERE client_id IN ({placeholders})", selected_ids)
+                    
                     cursor.execute(f"DELETE FROM clients WHERE id IN ({placeholders})", selected_ids)
                     
                     db.conn.commit()
                     
-                    st.success(f"¡Eliminados {len(selected_ids)} encargos!")
+                    st.success(f"¡Eliminados {len(selected_ids)} encargos con éxito!")
                     st.balloons()
                     st.rerun()
         else:
-            st.info("No has seleccionado ningún encargo.")
+            st.info("No has seleccionado ningún encargo para eliminar.")
     else:
         st.info("No hay encargos para eliminar.")
     
     st.markdown("---")
-
+    
 # Las funciones navigate_folder_structure, show_audit_steps y main_app quedan igual que en tu código original
 
 def navigate_folder_structure(db, folder_id=None, client_id=None, level=0):
@@ -294,3 +309,4 @@ def main_app():
 
 if __name__ == "__main__":
     main_app()
+
