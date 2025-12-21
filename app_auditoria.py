@@ -91,18 +91,17 @@ def vista_login():
     with t2:
         n = st.text_input("Nombre Completo")
         em = st.text_input("Correo Institucional")
-        ps = st.text_input("Clave (Mayús + Núm + Especial)", type="password")
+        ps = st.text_input("Clave", type="password")
         ps_c = st.text_input("Confirmar Clave", type="password")
         if st.button("Crear mi cuenta"):
             if ps != ps_c: st.error("Las claves no coinciden")
-            elif len(ps) < 8: st.error("Mínimo 8 caracteres")
             else:
                 try:
                     conn = get_db_connection()
                     conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (em, n, hash_pass(ps)))
                     conn.commit()
                     conn.close()
-                    st.success("¡Registro exitoso! Ya puedes ingresar.")
+                    st.success("¡Registro exitoso!")
                 except: st.error("El correo ya existe")
 
 # --- VISTA: APLICACIÓN PRINCIPAL ---
@@ -129,10 +128,16 @@ def vista_principal():
 
         c_nit = st.text_input("NIT (Con puntos y guión)", value=val_nit, placeholder="900.000.000-0")
         
-        st.caption("Consultas oficiales:")
-        col_c1, col_c2 = st.columns(2)
-        col_c1.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_html=True)
-        col_c2.markdown("[🔍 RUES](https://www.rues.org.co/)", unsafe_allow_html=True)
+        # --- AJUSTE RUES BÚSQUEDA AVANZADA ---
+        st.markdown("---")
+        st.caption("🔍 Herramientas de consulta:")
+        # Usamos columnas para que se vea más limpio
+        col_rues, col_dian = st.columns(2)
+        with col_rues:
+             st.link_button("Ir al RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+        with col_dian:
+             st.link_button("DIAN (RUT)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+        st.markdown("---")
         
         c_year = st.number_input("Año Fiscal", value=2025)
         c_tipo = st.selectbox("Tipo de Auditoría", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria", "Auditoría Interna", "Due Diligence"])
@@ -151,7 +156,6 @@ def vista_principal():
             else: st.warning("Nombre y NIT son obligatorios")
 
     # --- PANEL CENTRAL ---
-    # He añadido aquí la imagen que solicitaste
     st.image("https://cdn-icons-png.flaticon.com/512/2645/2645853.png", width=80) 
     st.title("📊 Panel de Control de Auditorías")
     
