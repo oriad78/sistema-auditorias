@@ -92,24 +92,74 @@ def vista_login():
     t1, t2 = st.tabs(["🔐 Iniciar Sesión", "📝 Registrar Auditor"])
     
     with t1:
-        # El uso de st.form ayuda a que el navegador gestione el autocompletado
-        with st.form("login_form"):
-            st.write("Ingrese sus credenciales")
-            e = st.text_input("Correo electrónico", key="login_email", autocomplete="email")
-            p = st.text_input("Contraseña", type="password", key="login_password", autocomplete="current-password")
-            submitted = st.form_submit_button("Ingresar")
+        # Lógica de Inicio de Sesión Normal
+        if 'recuperando' not in st.session_state:
+            with st.form("login_form"):
+                st.write("### Bienvenido de nuevo")
+                e = st.text_input("Correo electrónico", key="login_email", autocomplete="email")
+                p = st.text_input("Contraseña", type="password", key="login_password", autocomplete="current-password")
+                submitted = st.form_submit_button("Ingresar")
+                
+                if submitted:
+                    conn = get_db_connection()
+                    u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", 
+                                   (e, hash_pass(p))).fetchone()
+                    conn.close()
+                    if u:
+                        st.session_state.user_id, st.session_state.user_name = u[0], u[1]
+                        st.rerun()
+                    else:
+                        st.error("Credenciales incorrectas")
             
-            if submitted:
-                conn = get_db_connection()
-                u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
-                conn.close()
-                if u:
-                    st.session_state.user_id, st.session_state.user_name = u[0], u[1]
-                    st.rerun()
-                else:
-                    st.error("Credenciales incorrectas")
+            # Botón para activar modo recuperación
+            if st.button("¿Olvidó su contraseña?"):
+                st.session_state.recuperando = True
+                st.rerun()
+
+        # LÓGICA DE RECUPERACIÓN (Aparece si presionan el botón)
+        else:
+            st.warning("### Recuperar acceso")
+            st.write("Para validar su identidad, ingrese su correo y nombre completo de registro.")
+            
+            with st.form("recovery_form"):
+                r_email = st.text_input("Correo electrónico")
+                r_name = st.text_input("Nombre Completo (como se registró)")
+                new_p = st.text_input("Nueva Contraseña", type="password")
+                confirm_p = st.text_input("Confirmar Nueva Contraseña", type="password")
+                
+                col_rec1, col_rec2 = st.columns(2)
+                with col_rec1:
+                    btn_rec = st.form_submit_button("Actualizar Contraseña")
+                with col_rec2:
+                    if st.form_submit_button("Cancelar"):
+                        del st.session_state.recuperando
+                        st.rerun()
+
+                if btn_rec:
+                    if new_p != confirm_p:
+                        st.error("Las nuevas contraseñas no coinciden")
+                    elif len(new_p) < 4:
+                        st.error("La clave debe ser de al menos 4 caracteres")
+                    else:
+                        conn = get_db_connection()
+                        # Validamos que el correo y el nombre coincidan en la base de datos
+                        user = conn.execute("SELECT id FROM users WHERE email=? AND full_name=?", 
+                                          (r_email, r_name)).fetchone()
+                        
+                        if user:
+                            conn.execute("UPDATE users SET password_hash=? WHERE id=?", 
+                                       (hash_pass(new_p), user[0]))
+                            conn.commit()
+                            conn.close()
+                            st.success("✅ Contraseña actualizada correctamente. Ya puede ingresar.")
+                            del st.session_state.recuperando
+                            # Pequeña pausa para que vean el éxito antes de recargar
+                        else:
+                            conn.close()
+                            st.error("❌ Los datos no coinciden con nuestros registros.")
     
     with t2:
+        # El código de registro permanece igual...
         with st.form("register_form"):
             n = st.text_input("Nombre Completo")
             em = st.text_input("Correo Institucional", autocomplete="email")
@@ -123,7 +173,8 @@ def vista_login():
                 else:
                     try:
                         conn = get_db_connection()
-                        conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (em, n, hash_pass(ps)))
+                        conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", 
+                                     (em, n, hash_pass(ps)))
                         conn.commit(); conn.close()
                         st.success("¡Registro exitoso! Ya puede iniciar sesión.")
                     except: st.error("El correo ya existe")
@@ -219,3 +270,4 @@ if __name__ == "__main__":
         vista_login()
     else:
         vista_principal()
+
