@@ -2,32 +2,34 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import hashlib
-import re
 import io
 from datetime import datetime
 from fpdf import FPDF
 
-# --- CONFIGURACIÓN Y ESTILOS ---
+# --- CONFIGURACIÓN PROFESIONAL ---
 st.set_page_config(
-    page_title="AuditPro - Gestión Profesional",
-    page_icon="⚖️",
+    page_title="Sistema de Gestión de Auditorías",
+    page_icon="📊",
     layout="wide"
 )
 
-# --- CLASE DE BASE DE DATOS ---
+# --- CLASE DE BASE DE DATOS (EL CEREBRO) ---
 class AuditDatabase:
     def __init__(self):
+        # Conexión a la base de datos local
         self.conn = sqlite3.connect('audit_management.db', check_same_thread=False)
         self.create_tables()
 
     def create_tables(self):
         cursor = self.conn.cursor()
+        # Tabla de Usuarios
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             full_name TEXT)''')
         
+        # Tabla de Clientes (Encargos)
         cursor.execute('''CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -36,6 +38,7 @@ class AuditDatabase:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id))''')
         
+        # Estructura de Carpetas
         cursor.execute('''CREATE TABLE IF NOT EXISTS folder_structure (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             client_id INTEGER,
@@ -47,123 +50,136 @@ class AuditDatabase:
 
     def get_user_clients(self, user_id):
         return pd.read_sql_query(
-            "SELECT id, client_name, audit_year, created_at FROM clients WHERE user_id = ?", 
+            "SELECT id, client_name as 'Cliente', audit_year as 'Año', created_at as 'Fecha Creación' FROM clients WHERE user_id = ?", 
             self.conn, params=(user_id,)
         )
 
-    def delete_clients(self, client_ids):
-        cursor = self.conn.cursor()
-        ids_tuple = tuple(client_ids)
-        placeholders = ','.join(['?'] * len(client_ids))
-        # Eliminar en cascada manual (puedes mejorar esto con ON DELETE CASCADE en SQL)
-        cursor.execute(f"DELETE FROM folder_structure WHERE client_id IN ({placeholders})", client_ids)
-        cursor.execute(f"DELETE FROM clients WHERE id IN ({placeholders})", client_ids)
-        self.conn.commit()
-
-# --- FUNCIONES DE EXPORTACIÓN ---
-def export_to_excel(df):
+# --- FUNCIONES DE EXPORTACIÓN (TUS REPORTES) ---
+def generar_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Encargos')
+        df.to_excel(writer, index=False, sheet_name='Lista_Encargos')
     return output.getvalue()
 
-def export_to_pdf(df):
+def generar_pdf(df):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(190, 10, "Reporte de Encargos de Auditoría", ln=True, align='C')
+    pdf.cell(190, 10, "REPORTE DE ENCARGOS DE AUDITORIA", ln=True, align='C')
     pdf.ln(10)
     
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(80, 10, "Cliente", 1)
-    pdf.cell(40, 10, "Año", 1)
-    pdf.cell(70, 10, "Fecha Creación", 1)
+    # Encabezados de tabla
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(80, 10, "Nombre del Cliente", 1)
+    pdf.cell(30, 10, "Año", 1)
+    pdf.cell(80, 10, "Fecha de Creación", 1)
     pdf.ln()
     
-    pdf.set_font("Arial", '', 10)
-    for index, row in df.iterrows():
-        pdf.cell(80, 10, str(row['client_name']), 1)
-        pdf.cell(40, 10, str(row['audit_year']), 1)
-        pdf.cell(70, 10, str(row['created_at']), 1)
+    # Datos
+    pdf.set_font("Arial", '', 9)
+    for _, row in df.iterrows():
+        pdf.cell(80, 10, str(row['Cliente']), 1)
+        pdf.cell(30, 10, str(row['Año']), 1)
+        pdf.cell(80, 10, str(row['Fecha Creación']), 1)
         pdf.ln()
     
-    return pdf.output(dest='S').encode('latin-1')
+    return pdf.output()
 
 # --- INTERFAZ DE USUARIO ---
-def client_management_pro():
-    st.header("👥 Gestión de Encargos")
-    db = AuditDatabase()
+def main_app():
+    st.title("⚖️ Gestión Profesional de Auditorías")
     
-    # --- SECCIÓN 1: CREACIÓN ---
-    with st.expander("➕ Crear Nuevo Encargo", expanded=False):
-        col1, col2, col3 = st.columns([2, 1, 1])
-        name = col1.text_input("Nombre del Cliente")
-        year = col2.number_input("Año", value=datetime.now().year)
-        if col3.button("Guardar Encargo", use_container_width=True):
-            if name:
+    # Simulación de sesión (para que el código funcione de inmediato)
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = 1
+        st.session_state.user_email = "contador@ejemplo.com"
+
+    db = AuditDatabase()
+
+    # 1. FORMULARIO DE CREACIÓN
+    with st.expander("➕ Crear Nuevo Encargo de Auditoría", expanded=False):
+        c1, c2 = st.columns(2)
+        nuevo_cliente = c1.text_input("Nombre de la Empresa / Cliente")
+        anio_auditoria = c2.number_input("Año Fiscal", value=2024)
+        
+        if st.button("💾 Guardar en Base de Datos"):
+            if nuevo_cliente:
                 cursor = db.conn.cursor()
                 cursor.execute("INSERT INTO clients (user_id, client_name, audit_year) VALUES (?, ?, ?)", 
-                             (st.session_state.user_id, name, year))
+                             (st.session_state.user_id, nuevo_cliente, anio_auditoria))
                 db.conn.commit()
-                st.success("Cliente creado")
+                st.success(f"Encargo para {nuevo_cliente} creado correctamente.")
                 st.rerun()
+            else:
+                st.error("Por favor, ingrese el nombre del cliente.")
 
-    # --- SECCIÓN 2: LISTADO Y EXPORTACIÓN ---
-    df_clients = db.get_user_clients(st.session_state.user_id)
+    # 2. SECCIÓN DE REPORTE Y EXPORTACIÓN
+    df_clientes = db.get_user_clients(st.session_state.user_id)
     
-    if not df_clients.empty:
-        st.subheader("📋 Mis Encargos")
+    if not df_clientes.empty:
+        st.subheader("📋 Encargos Registrados")
         
-        # Barra de herramientas de exportación
-        exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
-        with exp_col2:
-            excel_data = export_to_excel(df_clients)
-            st.download_button("📥 Descargar Excel", excel_data, "auditoria.xlsx", 
-                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        with exp_col3:
-            pdf_data = export_to_pdf(df_clients)
-            st.download_button("📥 Descargar PDF", pdf_data, "auditoria.pdf", "application/pdf")
+        # Botones de Exportación
+        col_ex1, col_ex2 = st.columns(2)
+        
+        with col_ex1:
+            excel_data = generar_excel(df_clientes)
+            st.download_button(
+                label="📥 Descargar Reporte en Excel",
+                data=excel_data,
+                file_name=f"reporte_auditoria_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            
+        with col_ex2:
+            pdf_data = generar_pdf(df_clientes)
+            st.download_button(
+                label="📥 Descargar Reporte en PDF",
+                data=pdf_data,
+                file_name=f"reporte_auditoria_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
-        # --- SECCIÓN 3: BORRADO MÚLTIPLE PROFESIONAL ---
+        # 3. SECCIÓN DE ELIMINACIÓN (BORRADO SEGURO)
         st.markdown("---")
-        st.subheader("🗑️ Eliminación Masiva")
+        st.subheader("🗑️ Zona de Eliminación")
+        st.info("Seleccione los encargos que desea borrar definitivamente.")
         
-        # Usamos un dataframe con selección (Data Editor de Streamlit)
-        df_with_selections = df_clients.copy()
-        df_with_selections.insert(0, "Seleccionar", False)
+        # Tabla interactiva para seleccionar
+        df_con_seleccion = df_clientes.copy()
+        df_con_seleccion.insert(0, "Seleccionar", False)
         
-        edited_df = st.data_editor(
-            df_with_selections,
+        tabla_editada = st.data_editor(
+            df_con_seleccion,
             column_config={"Seleccionar": st.column_config.CheckboxColumn(required=True)},
-            disabled=["id", "client_name", "audit_year", "created_at"],
+            disabled=["id", "Cliente", "Año", "Fecha Creación"],
             hide_index=True,
             use_container_width=True
         )
 
-        selected_ids = edited_df[edited_df["Seleccionar"] == True]["id"].tolist()
+        # Lógica de borrado
+        ids_a_borrar = tabla_editada[tabla_editada["Seleccionar"] == True]["id"].tolist()
 
-        if selected_ids:
-            st.warning(f"Se han seleccionado {len(selected_ids)} registros para eliminar.")
-            col_del1, col_del2 = st.columns(2)
+        if ids_a_borrar:
+            st.warning(f"⚠️ Ha seleccionado {len(ids_a_borrar)} encargo(s) para eliminar.")
+            confirmacion = st.text_input("Para confirmar la eliminación, escriba la palabra **ELIMINAR** en mayúsculas:")
             
-            confirm = col_del1.text_input("Escribe 'ELIMINAR' para confirmar")
-            if col_del2.button("Ejecutar Eliminación", type="primary", disabled=(confirm != "ELIMINAR")):
-                db.delete_clients(selected_ids)
-                st.success("Registros eliminados correctamente")
-                st.rerun()
+            if st.button("❌ EJECUTAR ELIMINACIÓN", type="primary"):
+                if confirmacion == "ELIMINAR":
+                    cursor = db.conn.cursor()
+                    # Borrar carpetas relacionadas y luego el cliente
+                    placeholders = ','.join(['?'] * len(ids_a_borrar))
+                    cursor.execute(f"DELETE FROM folder_structure WHERE client_id IN ({placeholders})", ids_a_borrar)
+                    cursor.execute(f"DELETE FROM clients WHERE id IN ({placeholders})", ids_a_borrar)
+                    db.conn.commit()
+                    st.success("Los datos han sido eliminados.")
+                    st.rerun()
+                else:
+                    st.error("Palabra de confirmación incorrecta.")
     else:
-        st.info("No hay encargos registrados.")
-
-# --- LÓGICA DE INICIO (SIMPLIFICADA PARA EL EJEMPLO) ---
-def main():
-    if 'user_id' not in st.session_state:
-        st.session_state.user_id = 1  # Simulación de login para pruebas
-        st.session_state.user_email = "admin@audit.com"
-
-    menu = st.sidebar.selectbox("Navegación", ["Gestión de Clientes", "Dashboard"])
-    
-    if menu == "Gestión de Clientes":
-        client_management_pro()
+        st.write("No hay encargos registrados todavía.")
 
 if __name__ == "__main__":
-    main()
+    main_app()
