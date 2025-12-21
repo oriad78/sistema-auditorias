@@ -131,7 +131,6 @@ def vista_principal():
         
         st.caption("Consultas oficiales:")
         col_c1, col_c2 = st.columns(2)
-        # CORRECCIÓN AQUÍ: unsafe_allow_html=True
         col_c1.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_html=True)
         col_c2.markdown("[🔍 RUES](https://www.rues.org.co/)", unsafe_allow_html=True)
         
@@ -151,6 +150,9 @@ def vista_principal():
                 st.rerun()
             else: st.warning("Nombre y NIT son obligatorios")
 
+    # --- PANEL CENTRAL ---
+    # He añadido aquí la imagen que solicitaste
+    st.image("https://cdn-icons-png.flaticon.com/512/2645/2645853.png", width=80) 
     st.title("📊 Panel de Control de Auditorías")
     
     query = st.text_input("🔍 Buscador inteligente por NIT o Empresa", placeholder="Escriba para filtrar...")
