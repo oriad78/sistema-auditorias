@@ -413,6 +413,74 @@ if getattr(st.session_state, "encargo_creado", None):
                         st.rerun()
     else:
         st.info("No hay encargos creados. Usa el formulario arriba para crear tu primer encargo.")
+        
+ # ===============================================
+ # NUEVA FUNCIÓN: Eliminar encargos seleccionados
+ # ===============================================
+ st.markdown("---")
+ st.subheader("🗑️ Eliminar encargos seleccionados")
+ 
+ # Obtener lista de encargos nuevamente para las casillas
+ db_select = AuditDatabase()
+ cursor_select = db_select.conn.cursor()
+ cursor_select.execute(
+     "SELECT id, client_name, audit_year FROM clients WHERE user_id = ? ORDER BY audit_year DESC, client_name",
+     (st.session_state.user_id,)
+ )
+ all_clients = cursor_select.fetchall()
+ 
+ if all_clients:
+     st.write("Marca los encargos que deseas eliminar:")
+     
+     # Diccionario para guardar las selecciones
+     selected_to_delete = {}
+     
+     for client_id, name, year in all_clients:
+         key = f"delete_check_{client_id}"
+         selected_to_delete[client_id] = st.checkbox(
+             f"{name} - Año {year}",
+             key=key
+         )
+     
+     # Filtrar solo los marcados
+     clients_to_delete = [cid for cid, selected in selected_to_delete.items() if selected]
+     
+     if clients_to_delete:
+         st.warning(f"Has seleccionado {len(clients_to_delete)} encargo(s) para eliminar.")
+         
+         if st.checkbox("⚠️ Confirmo que quiero eliminar permanentemente los encargos seleccionados"):
+             if st.button("🗑️ Eliminar encargos seleccionados", type="primary"):
+                 db = AuditDatabase()
+                 cursor = db.conn.cursor()
+                 
+                 # Borrar pasos de auditoría relacionados
+                 cursor.execute("""
+                     DELETE FROM audit_steps WHERE folder_id IN (
+                         SELECT id FROM folder_structure WHERE client_id IN ({})
+                     )
+                 """.format(','.join('?' for _ in clients_to_delete)), clients_to_delete)
+                 
+                 # Borrar carpetas relacionadas
+                 cursor.execute("""
+                     DELETE FROM folder_structure WHERE client_id IN ({})
+                 """.format(','.join('?' for _ in clients_to_delete)), clients_to_delete)
+                 
+                 # Borrar los encargos/clientes
+                 cursor.execute("""
+                     DELETE FROM clients WHERE id IN ({})
+                 """.format(','.join('?' for _ in clients_to_delete)), clients_to_delete)
+                 
+                 db.conn.commit()
+                 
+                 st.success(f"¡{len(clients_to_delete)} encargo(s) eliminados exitosamente!")
+                 st.balloons()
+                 st.rerun()
+     else:
+         st.info("No has seleccionado ningún encargo para eliminar.")
+ else:
+     st.info("No hay encargos para seleccionar.")
+ 
+ st.markdown("---")
 
 # Navegación por la estructura de carpetas
 def navigate_folder_structure(db, folder_id=None, client_id=None, level=0):
@@ -557,6 +625,7 @@ def main_app():
 # Ejecutar la aplicación
 if __name__ == "__main__":
     main_app()
+
 
 
 
