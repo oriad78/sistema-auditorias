@@ -71,26 +71,47 @@ def hash_pass(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 # Función para INICIALIZAR los pasos de la imagen cuando se crea un cliente nuevo
-def inicializar_programa_auditoria(client_id):
-    pasos_template = [
-        # SECCIÓN 100: Aceptación
-        ("100 - Aceptación y continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente, incorporar el resumen y actualizar.", "Instrucciones: Revise la integridad de la gerencia y si el equipo tiene la competencia necesaria."),
-        ("100 - Aceptación y continuación de clientes", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP (Quality Review Partner).", "Instrucciones: Determine si es una entidad de interés público."),
-        ("100 - Aceptación y continuación de clientes", "4000", "(ISA 200, 220, 300) Considerar el cumplimiento de requisitos éticos e independencia.", "Instrucciones: Llenar formulario de independencia de la firma."),
-        ("100 - Aceptación y continuación de clientes", "5000", "(ISA 210, 300) Asegurarse de que la carta de contratación esté actualizada y firmada.", "Instrucciones: Adjuntar Carta de Encargo firmada."),
-        
-        # SECCIÓN 150: Administración
-        ("150 - Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo.", "Instrucciones: Asignar roles y cronograma en el sistema."),
-        ("150 - Administración del proyecto", "3000", "(ISA 300) Preparar y monitorear el avance con relación al plan del proyecto.", "Instrucciones: Reunión de planeación."),
+# --- 1. ESTA ES LA VARIABLE (El contenido de tus imágenes) ---
+TEMPLATE_AUDITORIA = [
+    # SECCIÓN 100
+    ("100 - Aceptación y continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente, incorporar el resumen y actualizar en función de los acontecimientos.", "Instrucciones: Revise la integridad de la gerencia. Sub-fase: A Other Required steps."),
+    ("100 - Aceptación y continuación de clientes", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP (Quality Review Partner).", "Instrucciones: Evaluar si es entidad de interés público o alto riesgo."),
+    ("100 - Aceptación y continuación de clientes", "4000", "(ISA 200, 220, 300) Considerar el cumplimiento de requisitos éticos, las amenazas a la independencia y las protecciones relacionadas, y preparar/aprobar el resumen.", "Instrucciones: Completar confirmaciones de independencia."),
+    ("100 - Aceptación y continuación de clientes", "4010", "Realizar otras tareas específicas relativas a independencia.", "Instrucciones: Revisar servicios no auditoría prestados."),
+    ("100 - Aceptación y continuación de clientes", "5000", "(ISA 210, 300) Asegurarse de que la carta de contratación esté actualizada, firmada por el cliente y modificarla si cambian los términos del trabajo.", "Instrucciones: Adjuntar Carta de Encargo vigente."),
+    ("100 - Aceptación y continuación de clientes", "1200", "(ISA 600) Considerar el alcance de la participación en la auditoría del grupo.", "Instrucciones: Sub-fase: B Multilocation audit."),
+    ("100 - Aceptación y continuación de clientes", "3000", "Revisar la necesidad de rotación de los miembros del equipo de trabajo.", "Instrucciones: Cumplimiento de normas de rotación."),
+    ("100 - Aceptación y continuación de clientes", "4100", "Confirmación de independencia individual (Communications file).", "Instrucciones: Firma de todo el equipo."),
+    ("100 - Aceptación y continuación de clientes", "4200", "Confirmación de independencia de una oficina PwC del exterior.", "Instrucciones: Solo auditoría de grupo."),
+    ("100 - Aceptación y continuación de clientes", "6000", "(ISA 510) Contactarse con los auditores anteriores.", "Instrucciones: Comunicación con auditor predecesor."),
 
-        # SECCIÓN 1100: Comprensión
-        ("1100 - Comprensión del cliente y de la industria", "1000", "(ISA 315) Obtener o actualizar la comprensión del cliente y el ambiente en el que opera.", "Instrucciones: Documentar marco regulatorio y naturaleza de la entidad."),
-        ("1100 - Comprensión del cliente y de la industria", "1500", "(ISA 315, ISA 520) Realizar procedimientos de revisión analítica preliminares.", "Instrucciones: Comparativo año actual vs anterior.")
-    ]
-    
+    # SECCIÓN 150
+    ("150 - Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo.", "Instrucciones: Asignación de recursos."),
+    ("150 - Administración del proyecto", "3000", "(ISA 300) Preparar y monitorear el avance con relación al plan del proyecto.", "Instrucciones: Control de ejecución."),
+    ("150 - Administración del proyecto", "2000", "Discutir y acordar objetivos de desarrollo personal para todos los miembros del equipo.", "Instrucciones: Reunión de inicio."),
+
+    # SECCIÓN 1100
+    ("1100 - Comprensión del cliente y de la industria", "1000", "(ISA 315) Obtener o actualizar la comprensión del cliente y el ambiente en el que opera.", "Instrucciones: Entendimiento del negocio."),
+    ("1100 - Comprensión del cliente y de la industria", "1500", "(ISA 315, ISA 520) Realizar procedimientos de revisión analítica preliminares.", "Instrucciones: Variaciones significativas."),
+    ("1100 - Comprensión del cliente y de la industria", "3000", "Revisar las actas de reuniones y asambleas y obtener y revisar los nuevos contratos y acuerdos significativos.", "Instrucciones: Resumen de actas."),
+    ("1100 - Comprensión del cliente y de la industria", "1750", "Prepararse para y realizar la reunión de tipo 'demostrativo' con el directorio.", "Instrucciones: Reunión con Gobierno Corporativo."),
+
+    # SECCIÓN 1250 Y 1700
+    ("1250 - Evaluación del riesgo de fraude", "1000", "(ISA 240, ISA 315) Evaluar y responder al riesgo de fraude.", "Instrucciones: Triángulo del fraude."),
+    ("1700 - Evaluación del riesgo/significatividad", "2000", "(ISA 250, ISA 315) Obtener una comprensión general de las leyes y reglamentaciones.", "Instrucciones: Matriz legal.")
+]
+
+# --- 2. ESTA ES LA FUNCIÓN QUE PROCESA LO ANTERIOR ---
+def inicializar_programa_auditoria(client_id):
     conn = get_db_connection()
-    for seccion, codigo, desc, instr in pasos_template:
-        conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
+    # Borramos por si acaso había algo viejo
+    conn.execute("DELETE FROM audit_steps WHERE client_id = ?", (client_id,))
+    
+    # Insertamos los pasos de la variable TEMPLATE_AUDITORIA
+    for seccion, codigo, desc, instr in TEMPLATE_AUDITORIA:
+        conn.execute("""INSERT INTO audit_steps 
+                     (client_id, section_name, step_code, description, instructions) 
+                     VALUES (?, ?, ?, ?, ?)""",
                      (client_id, seccion, codigo, desc, instr))
     conn.commit()
     conn.close()
@@ -275,5 +296,6 @@ def vista_login():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
 
 
