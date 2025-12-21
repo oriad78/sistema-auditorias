@@ -34,7 +34,7 @@ def hash_pass(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def buscar_nit_historico(nombre, user_id):
-    if len(nombre) < 3: return None
+    if not nombre or len(nombre) < 3: return None
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''SELECT client_nit FROM clients 
@@ -54,7 +54,6 @@ def generar_pdf(df, auditor):
     pdf.cell(190, 10, f"Auditor: {auditor}", ln=True, align='C')
     pdf.ln(10)
     
-    # Encabezados
     pdf.set_font("Helvetica", 'B', 9)
     cols = ["Cliente", "NIT", "Año", "Tipo", "Estado"]
     widths = [60, 35, 15, 45, 35]
@@ -78,8 +77,8 @@ def vista_login():
     t1, t2 = st.tabs(["🔐 Iniciar Sesión", "📝 Registrar Auditor"])
     
     with t1:
-        e = st.text_input("Correo electrónico")
-        p = st.text_input("Contraseña", type="password")
+        e = st.text_input("Correo electrónico", key="login_user")
+        p = st.text_input("Contraseña", type="password", key="login_pwd")
         if st.button("Ingresar"):
             conn = get_db_connection()
             u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
@@ -111,13 +110,13 @@ def vista_principal():
     with st.sidebar:
         st.title(f"👨‍💼 Auditor: {st.session_state.user_name}")
         if st.button("Cerrar Sesión"):
-            del st.session_state.user_id
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
         
         st.divider()
         st.subheader("➕ Nuevo Encargo")
         
-        # 1. Sugerencia de NIT
         c_name = st.text_input("Nombre de la Empresa", placeholder="Ej: Inversiones S.A.S.")
         
         sugerencia = buscar_nit_historico(c_name, st.session_state.user_id)
@@ -130,11 +129,11 @@ def vista_principal():
 
         c_nit = st.text_input("NIT (Con puntos y guión)", value=val_nit, placeholder="900.000.000-0")
         
-        # 2. Herramientas de consulta externa
-        st.caption("Consultas oficiales (se abren en otra pestaña):")
+        st.caption("Consultas oficiales:")
         col_c1, col_c2 = st.columns(2)
-        col_c1.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_type=True)
-        col_c2.markdown("[🔍 RUES](https://www.rues.org.co/)", unsafe_allow_type=True)
+        # CORRECCIÓN AQUÍ: unsafe_allow_html=True
+        col_c1.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_html=True)
+        col_c2.markdown("[🔍 RUES](https://www.rues.org.co/)", unsafe_allow_html=True)
         
         c_year = st.number_input("Año Fiscal", value=2025)
         c_tipo = st.selectbox("Tipo de Auditoría", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria", "Auditoría Interna", "Due Diligence"])
@@ -152,11 +151,9 @@ def vista_principal():
                 st.rerun()
             else: st.warning("Nombre y NIT son obligatorios")
 
-    # PANEL CENTRAL
     st.title("📊 Panel de Control de Auditorías")
     
-    # 3. Buscador
-    query = st.text_input("🔍 Buscador inteligente por NIT o Empresa", placeholder="Escriba para filtrar resultados...")
+    query = st.text_input("🔍 Buscador inteligente por NIT o Empresa", placeholder="Escriba para filtrar...")
     
     conn = get_db_connection()
     df = pd.read_sql_query("""
@@ -167,19 +164,16 @@ def vista_principal():
     conn.close()
 
     if query:
-        df = df[df['Cliente'].str.contains(query, case=False) | df['NIT'].str.contains(query, case=False)]
+        df = df[df['Cliente'].str.contains(query, case=False, na=False) | df['NIT'].str.contains(query, case=False, na=False)]
 
     if not df.empty:
-        # Botones de reporte
         col_r1, col_r2 = st.columns(2)
         with col_r1:
-            st.download_button("📥 Descargar Excel para Auditoría", data=pd.DataFrame(df).to_csv(index=False).encode('utf-8'), file_name="encargos.csv")
+            st.download_button("📥 Exportar Excel", data=df.to_csv(index=False).encode('utf-8'), file_name="encargos.csv")
         with col_r2:
-            st.download_button("📥 Descargar PDF Formal", data=generar_pdf(df, st.session_state.user_name), file_name="reporte.pdf")
+            st.download_button("📥 Exportar PDF", data=generar_pdf(df, st.session_state.user_name), file_name="reporte.pdf")
 
         st.divider()
-        
-        # 4. Tabla Interactiva (Semáforo)
         st.subheader("⚡ Gestión de Avances")
         df_edit = df.copy()
         df_edit.insert(0, "🗑️", False)
@@ -195,16 +189,15 @@ def vista_principal():
             use_container_width=True
         )
 
-        if st.button("💾 Sincronizar Cambios de Estado"):
+        if st.button("💾 Sincronizar Cambios"):
             conn = get_db_connection()
             for _, row in res_tabla.iterrows():
                 conn.execute("UPDATE clients SET estado=?, tipo_encargo=? WHERE id=?", (row['Estado'], row['Tipo'], row['id']))
             conn.commit()
             conn.close()
-            st.success("¡Estados actualizados!")
+            st.success("¡Base de datos actualizada!")
             st.rerun()
 
-        # Borrado seguro
         ids_borrar = res_tabla[res_tabla["🗑️"] == True]["id"].tolist()
         if ids_borrar:
             if st.button(f"❌ Eliminar {len(ids_borrar)} seleccionados", type="primary"):
@@ -214,7 +207,7 @@ def vista_principal():
                 conn.close()
                 st.rerun()
     else:
-        st.info("No hay encargos que coincidan con la búsqueda.")
+        st.info("No hay registros para mostrar.")
 
 # --- INICIO ---
 if __name__ == "__main__":
