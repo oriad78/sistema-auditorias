@@ -317,10 +317,29 @@ def client_management():
             audit_year = st.number_input("Año de Auditoría", min_value=2000, max_value=2100, value=default_year, key="input_audit_year")
         
         if st.button("Crear Encargo", key="crear_encargo_btn"):
-    if not client_name.strip():
-        st.error("Por favor ingresa un nombre para el cliente")
-    else:
-        # Crear el encargo
+            if not client_name.strip():
+                st.error("Por favor ingresa un nombre para el cliente")
+            else:
+                cursor = db.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO clients (user_id, client_name, audit_year) VALUES (?, ?, ?)",
+                    (st.session_state.user_id, client_name.strip(), audit_year)
+                )
+                client_id = cursor.lastrowid
+                
+                # Crear estructura base de carpetas
+                base_structure = get_base_structure()
+                create_folder_structure(db, client_id, None, base_structure, 'main')
+                
+                db.conn.commit()
+                
+                st.success(f"Encargo '{client_name.strip()}' creado exitosamente para el año {audit_year}")
+                st.balloons()
+                
+                # Limpiar los campos para el próximo encargo
+                st.session_state.clear_client_form = True
+                st.rerun()
+                # Crear el encargo
         cursor = db.conn.cursor()
         cursor.execute(
             "INSERT INTO clients (user_id, client_name, audit_year) VALUES (?, ?, ?)",
@@ -626,6 +645,7 @@ def main_app():
 # Ejecutar la aplicación
 if __name__ == "__main__":
     main_app()
+
 
 
 
