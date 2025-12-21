@@ -94,33 +94,72 @@ def generar_pdf(df, auditor):
         pdf.cell(30, 10, str(row['Año']), 1); pdf.cell(40, 10, est, 1); pdf.ln()
     return bytes(pdf.output())
 
-# --- VISTAS ---
-def vista_login():
+# --- VISTAS ---def vista_login():
     st.title("⚖️ AuditPro: Sistema para Contadores")
     t1, t2 = st.tabs(["🔐 Iniciar Sesión", "📝 Registrar Auditor"])
+    
     with t1:
-        e = st.text_input("Correo electrónico", key="l_user")
-        p = st.text_input("Contraseña", type="password", key="l_pass")
-        if st.button("Ingresar"):
-            conn = get_db_connection()
-            u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
-            conn.close()
-            if u: st.session_state.user_id, st.session_state.user_name = u[0], u[1]; st.rerun()
-            else: st.error("Credenciales incorrectas")
+        # Usamos un contenedor para inyectar un pequeño truco de autocompletado
+        with st.form("login_form", clear_on_submit=False):
+            st.markdown("### Bienvenido de nuevo")
+            
+            # El parámetro 'autocomplete' ayuda al navegador a recordar el correo
+            email = st.text_input(
+                "Correo electrónico", 
+                key="l_user", 
+                help="El navegador recordará los correos ingresados previamente",
+                autocomplete="email" 
+            )
+            
+            password = st.text_input(
+                "Contraseña", 
+                type="password", 
+                key="l_pass",
+                autocomplete="current-password"
+            )
+            
+            submit = st.form_submit_button("Ingresar")
+            
+            if submit:
+                if not email or not password:
+                    st.warning("Por favor complete todos los campos")
+                else:
+                    conn = get_db_connection()
+                    u = conn.execute(
+                        "SELECT id, full_name FROM users WHERE email=? AND password_hash=?", 
+                        (email, hash_pass(password))
+                    ).fetchone()
+                    conn.close()
+                    
+                    if u:
+                        st.session_state.user_id = u[0]
+                        st.session_state.user_name = u[1]
+                        st.rerun()
+                    else:
+                        st.error("Credenciales incorrectas")
+    
     with t2:
+        # (El código de registro se mantiene igual con el campo de confirmación)
         n = st.text_input("Nombre Completo")
-        em = st.text_input("Correo Institucional")
-        ps = st.text_input("Contraseña", type="password")
-        ps_c = st.text_input("Confirmar Contraseña", type="password") # REINCORPORADO
+        em = st.text_input("Correo Institucional", autocomplete="email")
+        ps = st.text_input("Contraseña", type="password", autocomplete="new-password")
+        ps_c = st.text_input("Confirmar Contraseña", type="password")
+        
         if st.button("Crear mi cuenta"):
-            if ps != ps_c: st.error("Las contraseñas no coinciden")
-            elif len(ps) < 4: st.error("Clave muy corta")
+            if ps != ps_c: 
+                st.error("Las contraseñas no coinciden")
+            elif len(ps) < 4: 
+                st.error("La clave debe tener al menos 4 caracteres")
             else:
                 try:
                     conn = get_db_connection()
-                    conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (em, n, hash_pass(ps)))
-                    conn.commit(); conn.close(); st.success("¡Registro exitoso! Ya puedes iniciar sesión.")
-                except: st.error("El correo ya existe")
+                    conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", 
+                                 (em, n, hash_pass(ps)))
+                    conn.commit()
+                    conn.close()
+                    st.success("¡Registro exitoso! Ya puedes iniciar sesión en la pestaña de al lado.")
+                except:
+                    st.error("Este correo ya se encuentra registrado")
 
 def vista_papeles_trabajo(client_id, client_name):
     st.markdown(f"## 📂 Expediente Digital: {client_name}")
@@ -206,3 +245,4 @@ def vista_principal():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
