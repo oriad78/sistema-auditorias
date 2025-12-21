@@ -44,7 +44,7 @@ def buscar_nit_historico(nombre, user_id):
     conn.close()
     return res[0] if res else None
 
-# --- EXPORTACIONES (CORREGIDA PARA EVITAR EL ERROR DE EMOJIS) ---
+# --- EXPORTACIONES ---
 def generar_pdf(df, auditor):
     pdf = FPDF()
     pdf.add_page()
@@ -63,10 +63,7 @@ def generar_pdf(df, auditor):
     
     pdf.set_font("Helvetica", '', 8)
     for _, row in df.iterrows():
-        # LIMPIEZA DE EMOJIS: Reemplazamos los emojis por texto para que el PDF no falle
-        estado_texto = str(row['Estado'])
-        estado_texto = estado_texto.replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", "")
-        
+        estado_texto = str(row['Estado']).replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", "")
         pdf.cell(widths[0], 10, str(row['Cliente'])[:30].encode('latin-1', 'replace').decode('latin-1'), 1)
         pdf.cell(widths[1], 10, str(row['NIT']), 1)
         pdf.cell(widths[2], 10, str(row['Año']), 1)
@@ -92,22 +89,6 @@ def vista_login():
                 st.rerun()
             else: st.error("Credenciales incorrectas")
 
-    with t2:
-        n = st.text_input("Nombre Completo")
-        em = st.text_input("Correo Institucional")
-        ps = st.text_input("Clave", type="password")
-        ps_c = st.text_input("Confirmar Clave", type="password")
-        if st.button("Crear mi cuenta"):
-            if ps != ps_c: st.error("Las claves no coinciden")
-            else:
-                try:
-                    conn = get_db_connection()
-                    conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (em, n, hash_pass(ps)))
-                    conn.commit()
-                    conn.close()
-                    st.success("¡Registro exitoso!")
-                except: st.error("El correo ya existe")
-
 # --- VISTA: APLICACIÓN PRINCIPAL ---
 def vista_principal():
     with st.sidebar:
@@ -119,20 +100,17 @@ def vista_principal():
         
         st.divider()
         st.subheader("➕ Nuevo Encargo")
-        
         c_name = st.text_input("Nombre de la Empresa", placeholder="Ej: Inversiones S.A.S.")
-        
         sugerencia = buscar_nit_historico(c_name, st.session_state.user_id)
         val_nit = ""
         if sugerencia:
             st.info(f"💡 Historial: NIT {sugerencia}")
-            if st.button("Usar NIT sugerido"):
-                st.session_state.temp_nit = sugerencia
+            if st.button("Usar NIT sugerido"): st.session_state.temp_nit = sugerencia
             val_nit = st.session_state.get('temp_nit', "")
 
         c_nit = st.text_input("NIT (Con puntos y guión)", value=val_nit, placeholder="900.000.000-0")
         
-        st.caption("Consultas oficiales (se abren en otra pestaña):")
+        st.caption("Consultas oficiales:")
         col_c1, col_c2 = st.columns(2)
         col_c1.markdown("[🔍 RUES Avanzado](https://www.rues.org.co/busqueda-avanzada)", unsafe_allow_html=True)
         col_c2.markdown("[🔍 DIAN (RUT)](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_html=True)
@@ -155,31 +133,48 @@ def vista_principal():
 
     # --- PANEL CENTRAL ---
     st.image("https://cdn-icons-png.flaticon.com/512/2645/2645853.png", width=80) 
-    st.title("📊 Panel de Control de Auditorías")
     
-    query = st.text_input("🔍 Buscador inteligente por NIT o Empresa", placeholder="Escriba para filtrar...")
+    # 1. Lógica de Búsqueda Mejorada
+    query = st.text_input("🔍 Buscador inteligente por NIT o Empresa", placeholder="Escriba el nombre o NIT del cliente...")
     
     conn = get_db_connection()
-    df = pd.read_sql_query("""
+    df_full = pd.read_sql_query("""
         SELECT id, client_name as 'Cliente', client_nit as 'NIT', 
         audit_year as 'Año', tipo_encargo as 'Tipo', estado as 'Estado' 
         FROM clients WHERE user_id = ? ORDER BY created_at DESC""", 
         conn, params=(st.session_state.user_id,))
     conn.close()
 
-    if query:
-        df = df[df['Cliente'].str.contains(query, case=False, na=False) | df['NIT'].str.contains(query, case=False, na=False)]
+    df_filtered = df_full.copy()
+    busqueda_activa = False
 
-    if not df.empty:
+    if query:
+        busqueda_activa = True
+        df_filtered = df_full[
+            df_full['Cliente'].str.contains(query, case=False, na=False) | 
+            df_full['NIT'].str.contains(query, case=False, na=False)
+        ]
+
+    # Diferenciación visual del título
+    if busqueda_activa:
+        st.subheader(f"🔎 Resultados de búsqueda para: '{query}'")
+        if df_filtered.empty:
+            st.error(f"❌ No se encontró ningún cliente que coincida con '{query}'. Verifique el NIT o el nombre.")
+        else:
+            st.success(f"✅ Se encontraron {len(df_filtered)} coincidencias.")
+    else:
+        st.title("📊 Panel de Control de Auditorías")
+
+    if not df_filtered.empty:
         col_r1, col_r2 = st.columns(2)
         with col_r1:
-            st.download_button("📥 Exportar Excel", data=df.to_csv(index=False).encode('utf-8'), file_name="encargos.csv")
+            st.download_button("📥 Exportar Excel", data=df_filtered.to_csv(index=False).encode('utf-8'), file_name="encargos.csv")
         with col_r2:
-            st.download_button("📥 Exportar PDF", data=generar_pdf(df, st.session_state.user_name), file_name="reporte.pdf")
+            st.download_button("📥 Exportar PDF", data=generar_pdf(df_filtered, st.session_state.user_name), file_name="reporte.pdf")
 
         st.divider()
         st.subheader("⚡ Gestión de Avances")
-        df_edit = df.copy()
+        df_edit = df_filtered.copy()
         df_edit.insert(0, "🗑️", False)
         
         res_tabla = st.data_editor(
@@ -195,27 +190,3 @@ def vista_principal():
 
         if st.button("💾 Sincronizar Cambios"):
             conn = get_db_connection()
-            for _, row in res_tabla.iterrows():
-                conn.execute("UPDATE clients SET estado=?, tipo_encargo=? WHERE id=?", (row['Estado'], row['Tipo'], row['id']))
-            conn.commit()
-            conn.close()
-            st.success("¡Base de datos actualizada!")
-            st.rerun()
-
-        ids_borrar = res_tabla[res_tabla["🗑️"] == True]["id"].tolist()
-        if ids_borrar:
-            if st.button(f"❌ Eliminar {len(ids_borrar)} seleccionados", type="primary"):
-                conn = get_db_connection()
-                conn.execute(f"DELETE FROM clients WHERE id IN ({','.join(['?']*len(ids_borrar))})", ids_borrar)
-                conn.commit()
-                conn.close()
-                st.rerun()
-    else:
-        st.info("No hay registros para mostrar.")
-
-# --- INICIO ---
-if __name__ == "__main__":
-    if 'user_id' not in st.session_state:
-        vista_login()
-    else:
-        vista_principal()
