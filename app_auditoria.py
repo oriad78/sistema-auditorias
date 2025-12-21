@@ -1,9 +1,9 @@
-import streamlit as st
-import pandas as pd
-import sqlite3
 import hashlib
 import io
 import re
+import sqlite3
+import pandas as pd
+import streamlit as st
 from fpdf import FPDF
 
 # --- CONFIGURACIÓN ---
@@ -128,16 +128,12 @@ def vista_principal():
 
         c_nit = st.text_input("NIT (Con puntos y guión)", value=val_nit, placeholder="900.000.000-0")
         
-        # --- AJUSTE RUES BÚSQUEDA AVANZADA ---
-        st.markdown("---")
-        st.caption("🔍 Herramientas de consulta:")
-        # Usamos columnas para que se vea más limpio
-        col_rues, col_dian = st.columns(2)
-        with col_rues:
-             st.link_button("Ir al RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
-        with col_dian:
-             st.link_button("DIAN (RUT)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
-        st.markdown("---")
+        # --- CONSULTAS OFICIALES CON COLOR AZUL ---
+        st.caption("Consultas oficiales (se abren en otra pestaña):")
+        col_c1, col_c2 = st.columns(2)
+        # Se mantiene la estructura de Markdown para conservar el color azul de los links
+        col_c1.markdown("[🔍 RUES Avanzado](https://www.rues.org.co/busqueda-avanzada)", unsafe_allow_html=True)
+        col_c2.markdown("[🔍 DIAN (RUT)](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_html=True)
         
         c_year = st.number_input("Año Fiscal", value=2025)
         c_tipo = st.selectbox("Tipo de Auditoría", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria", "Auditoría Interna", "Due Diligence"])
