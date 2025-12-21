@@ -310,10 +310,11 @@ def client_management():
         col1, col2 = st.columns(2)
         with col1:
             default_name = "" if getattr(st.session_state, "clear_client_form", False) else st.session_state.get("last_client_name", "")
-    client_name = st.text_input("Nombre del Cliente", value=default_name, key="input_client_name")
+            client_name = st.text_input("Nombre del Cliente", value=default_name, key="input_client_name")
+        
         with col2:
             default_year = datetime.now().year if getattr(st.session_state, "clear_client_form", False) else st.session_state.get("last_audit_year", datetime.now().year)
-    audit_year = st.number_input("Año de Auditoría", min_value=2000, max_value=2100, value=default_year, key="input_audit_year")
+            audit_year = st.number_input("Año de Auditoría", min_value=2000, max_value=2100, value=default_year, key="input_audit_year")
         
         if st.button("Crear Encargo", key="crear_encargo_btn"):
     if not client_name.strip():
@@ -625,6 +626,7 @@ def main_app():
 # Ejecutar la aplicación
 if __name__ == "__main__":
     main_app()
+
 
 
 
