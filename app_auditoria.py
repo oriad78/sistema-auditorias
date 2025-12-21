@@ -11,7 +11,6 @@ st.set_page_config(page_title="Gestión Auditoría", layout="wide")
 
 # --- CONEXIÓN SEGURA A BASE DE DATOS ---
 def get_db_connection():
-    # El parámetro timeout evita que se quede "pensando" si la base está ocupada
     conn = sqlite3.connect('audit_management.db', timeout=10, check_same_thread=False)
     return conn
 
@@ -32,7 +31,6 @@ def create_tables():
     conn.commit()
     conn.close()
 
-# Crear tablas al iniciar
 create_tables()
 
 # --- FUNCIONES DE APOYO ---
@@ -40,6 +38,7 @@ def hash_pass(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def validar_password(p):
+    # Reglas: 8 caracteres, 1 Mayúscula, 1 Número, 1 Especial
     if len(p) < 8 or not re.search("[A-Z]", p) or not re.search("[0-9]", p) or not re.search("[!@#$%^&*]", p):
         return False
     return True
@@ -91,8 +90,15 @@ def vista_login():
         n_name = st.text_input("Nombre Completo")
         n_email = st.text_input("Nuevo Correo")
         n_pass = st.text_input("Nueva Clave (8+ carac, Mayús, Núm, Especial)", type="password")
+        # --- CAMBIO AQUÍ: SEGUNDO CAMPO DE CONTRASEÑA ---
+        n_pass_conf = st.text_input("Confirmar Nueva Clave", type="password")
+        
         if st.button("Crear Cuenta"):
-            if validar_password(n_pass):
+            if n_pass != n_pass_conf:
+                st.error("❌ Las contraseñas no coinciden. Por favor, verifícalas.")
+            elif not validar_password(n_pass):
+                st.error("❌ La clave no cumple los requisitos (8 caracteres, una Mayúscula, un Número y un Carácter especial).")
+            elif n_name and n_email:
                 try:
                     conn = get_db_connection()
                     cursor = conn.cursor()
@@ -100,11 +106,11 @@ def vista_login():
                                  (n_email, n_name, hash_pass(n_pass)))
                     conn.commit()
                     conn.close()
-                    st.success("¡Registrado! Ya puedes iniciar sesión.")
+                    st.success("✅ ¡Registrado con éxito! Ya puedes iniciar sesión a la izquierda.")
                 except:
-                    st.error("El correo ya está registrado.")
+                    st.error("❌ Este correo ya está registrado.")
             else:
-                st.error("La clave no cumple los requisitos de seguridad.")
+                st.warning("⚠️ Por favor, completa todos los campos.")
 
 # --- INTERFAZ: APP PRINCIPAL ---
 def vista_principal():
