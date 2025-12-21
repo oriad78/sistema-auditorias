@@ -339,6 +339,7 @@ def client_management():
                 # Limpiar los campos para el próximo encargo
                 st.session_state.clear_client_form = True
                 st.rerun()
+                
                 # Crear el encargo
         cursor = db.conn.cursor()
         cursor.execute(
@@ -374,8 +375,7 @@ if getattr(st.session_state, "encargo_creado", None):
         st.session_state.clear_client_form = True
         st.rerun()
     
-    # Opcional: limpiar automáticamente después de 5 segundos
-    # (no es necesario, pero queda bonito)
+    
                 st.error("Por favor ingresa un nombre para el cliente")
     
     # Migrar datos entre años
@@ -645,6 +645,7 @@ def main_app():
 # Ejecutar la aplicación
 if __name__ == "__main__":
     main_app()
+
 
 
 
