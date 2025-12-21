@@ -131,7 +131,7 @@ def vista_principal():
         # --- CONSULTAS OFICIALES CON COLOR AZUL ---
         st.caption("Consultas oficiales (se abren en otra pestaña):")
         col_c1, col_c2 = st.columns(2)
-        # Se mantiene la estructura de Markdown para conservar el color azul de los links
+        # Enlaces actualizados y con formato azul
         col_c1.markdown("[🔍 RUES Avanzado](https://www.rues.org.co/busqueda-avanzada)", unsafe_allow_html=True)
         col_c2.markdown("[🔍 DIAN (RUT)](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_html=True)
         
