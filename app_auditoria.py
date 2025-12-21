@@ -219,9 +219,9 @@ def vista_principal():
         vista_papeles_trabajo(st.session_state.active_client_id, st.session_state.active_client_name)
     else:
         # PANTALLA DE LISTADO (DASHBOARD)
-        st.image("https://cdn-icons-png.flaticon.com/512/2645/2645853.png", width=80) 
-        st.title("📊 Encargos de Auditoría")
-        
+        st.image("https://cdn-icons-png.flaticon.com/512/9334/9334544.png", width=80) 
+        st.title("💼 Encargos de Auditoría")
+                
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT id, client_name, client_nit, audit_year, estado FROM clients WHERE user_id = ? ORDER BY created_at DESC", 
                                conn, params=(st.session_state.user_id,))
@@ -275,4 +275,5 @@ def vista_login():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
 
