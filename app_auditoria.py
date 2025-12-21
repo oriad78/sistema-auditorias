@@ -308,11 +308,15 @@ def client_management():
                         st.rerun()
     else:
         st.info("No hay encargos creados. Usa el formulario arriba para crear tu primer encargo.")
-    
-    # Eliminar múltiples encargos
+    # --------------------------------------------------
+    # Opción para eliminar varios encargos con casillas
+    # --------------------------------------------------
     st.markdown("---")
-    st.subheader("🗑️ Eliminar encargos seleccionados")
+    st.subheader("🗑️ Eliminar varios encargos a la vez")
     
+    # Volver a cargar la lista de encargos para las casillas
+    db = AuditDatabase()
+    cursor = db.conn.cursor()
     cursor.execute(
         "SELECT id, client_name, audit_year FROM clients WHERE user_id = ? ORDER BY audit_year DESC, client_name",
         (st.session_state.user_id,)
@@ -320,37 +324,45 @@ def client_management():
     all_clients = cursor.fetchall()
     
     if all_clients:
-        st.write("Marca los encargos que deseas eliminar:")
-        selected_to_delete = {}
+        st.write("Marca las casillas de los encargos que quieres eliminar:")
         
+        selected_ids = []
         for client_id, name, year in all_clients:
-            key = f"delete_check_{client_id}"
-            selected_to_delete[client_id] = st.checkbox(f"{name} - Año {year}", key=key)
+            if st.checkbox(f"{name} - Año {year}", key=f"del_multi_{client_id}"):
+                selected_ids.append(client_id)
         
-        clients_to_delete = [cid for cid, selected in selected_to_delete.items() if selected]
-        
-        if clients_to_delete:
-            st.warning(f"Seleccionaste {len(clients_to_delete)} encargo(s) para eliminar.")
-            if st.checkbox("⚠️ Confirmo que quiero eliminarlos permanentemente"):
-                if st.button("🗑️ Eliminar seleccionados", type="primary"):
-                    db2 = AuditDatabase()
-                    cursor2 = db2.conn.cursor()
+        if selected_ids:
+            st.warning(f"Has seleccionado **{len(selected_ids)}** encargo(s) para eliminar.")
+            
+            if st.checkbox("⚠️ Sí, confirmo que quiero eliminarlos permanentemente (no se puede deshacer)"):
+                if st.button("🗑️ Eliminar los encargos seleccionados", type="primary"):
+                    # Borrar todo lo relacionado con esos encargos
+                    placeholders = ','.join(['?'] * len(selected_ids))
                     
-                    placeholders = ','.join('?' for _ in clients_to_delete)
-                    cursor2.execute(f"DELETE FROM audit_steps WHERE folder_id IN (SELECT id FROM folder_structure WHERE client_id IN ({placeholders}))", clients_to_delete)
-                    cursor2.execute(f"DELETE FROM folder_structure WHERE client_id IN ({placeholders})", clients_to_delete)
-                    cursor2.execute(f"DELETE FROM clients WHERE id IN ({placeholders})", clients_to_delete)
+                    cursor.execute(f"""
+                        DELETE FROM audit_steps 
+                        WHERE folder_id IN (
+                            SELECT id FROM folder_structure 
+                            WHERE client_id IN ({placeholders})
+                        )
+                    """, selected_ids)
                     
-                    db2.conn.commit()
-                    st.success(f"¡{len(clients_to_delete)} encargo(s) eliminados!")
+                    cursor.execute(f"DELETE FROM folder_structure WHERE client_id IN ({placeholders})", selected_ids)
+                    
+                    cursor.execute(f"DELETE FROM clients WHERE id IN ({placeholders})", selected_ids)
+                    
+                    db.conn.commit()
+                    
+                    st.success(f"¡Se eliminaron {len(selected_ids)} encargo(s) exitosamente!")
                     st.balloons()
                     st.rerun()
         else:
-            st.info("No has seleccionado ningún encargo.")
+            st.info("No has marcado ningún encargo para eliminar.")
     else:
-        st.info("No hay encargos para eliminar.")
-    st.markdown("---")
-
+        st.info("No hay encargos disponibles para eliminar.")
+    
+    st.markdown("---")    
+    
 # Resto de funciones (navigate_folder_structure, show_audit_steps, main_app) permanecen iguales
 # (las copio tal cual del código original, están bien)
 
@@ -457,3 +469,4 @@ def main_app():
 
 if __name__ == "__main__":
     main_app()
+
