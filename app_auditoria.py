@@ -44,7 +44,7 @@ def buscar_nit_historico(nombre, user_id):
     conn.close()
     return res[0] if res else None
 
-# --- EXPORTACIONES ---
+# --- EXPORTACIONES (CORREGIDA PARA EVITAR EL ERROR DE EMOJIS) ---
 def generar_pdf(df, auditor):
     pdf = FPDF()
     pdf.add_page()
@@ -63,11 +63,15 @@ def generar_pdf(df, auditor):
     
     pdf.set_font("Helvetica", '', 8)
     for _, row in df.iterrows():
-        pdf.cell(widths[0], 10, str(row['Cliente'])[:30], 1)
+        # LIMPIEZA DE EMOJIS: Reemplazamos los emojis por texto para que el PDF no falle
+        estado_texto = str(row['Estado'])
+        estado_texto = estado_texto.replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", "")
+        
+        pdf.cell(widths[0], 10, str(row['Cliente'])[:30].encode('latin-1', 'replace').decode('latin-1'), 1)
         pdf.cell(widths[1], 10, str(row['NIT']), 1)
         pdf.cell(widths[2], 10, str(row['Año']), 1)
-        pdf.cell(widths[3], 10, str(row['Tipo']), 1)
-        pdf.cell(widths[4], 10, str(row['Estado']), 1)
+        pdf.cell(widths[3], 10, str(row['Tipo']).encode('latin-1', 'replace').decode('latin-1'), 1)
+        pdf.cell(widths[4], 10, estado_texto, 1)
         pdf.ln()
     return bytes(pdf.output())
 
@@ -128,10 +132,8 @@ def vista_principal():
 
         c_nit = st.text_input("NIT (Con puntos y guión)", value=val_nit, placeholder="900.000.000-0")
         
-        # --- CONSULTAS OFICIALES CON COLOR AZUL ---
         st.caption("Consultas oficiales (se abren en otra pestaña):")
         col_c1, col_c2 = st.columns(2)
-        # Enlaces actualizados y con formato azul
         col_c1.markdown("[🔍 RUES Avanzado](https://www.rues.org.co/busqueda-avanzada)", unsafe_allow_html=True)
         col_c2.markdown("[🔍 DIAN (RUT)](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)", unsafe_allow_html=True)
         
