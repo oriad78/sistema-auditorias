@@ -10,7 +10,7 @@ from fpdf import FPDF
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="AuditPro - Sistema Seguro", page_icon="🔐", layout="wide")
 
-# --- CLASE DE BASE DE DATOS ACTUALIZADA ---
+# --- CLASE DE BASE DE DATOS ---
 class AuditDatabase:
     def __init__(self):
         self.conn = sqlite3.connect('audit_management.db', check_same_thread=False)
@@ -18,7 +18,6 @@ class AuditDatabase:
 
     def create_tables(self):
         cursor = self.conn.cursor()
-        # Tabla de Auditores (Usuarios)
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
@@ -26,7 +25,6 @@ class AuditDatabase:
             password_hash TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         
-        # Tabla de Clientes ligada al usuario
         cursor.execute('''CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -41,7 +39,6 @@ class AuditDatabase:
 
 # --- VALIDACIÓN DE CONTRASEÑA ---
 def validar_password(password):
-    # Al menos 8 caracteres, una mayúscula, un número y un carácter especial
     if len(password) < 8:
         return False, "La contraseña debe tener al menos 8 caracteres."
     if not re.search(r"[A-Z]", password):
@@ -49,7 +46,7 @@ def validar_password(password):
     if not re.search(r"[0-9]", password):
         return False, "Debe contener al menos un número."
     if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-        return False, "Debe contener al menos un carácter especial (ej: @, #, $)."
+        return False, "Debe contener al menos un carácter especial."
     return True, ""
 
 # --- FUNCIONES DE EXPORTACIÓN ---
@@ -82,7 +79,7 @@ def generar_pdf(df, auditor_nombre):
         pdf.ln()
     return bytes(pdf.output())
 
-# --- LÓGICA DE AUTENTICACIÓN ---
+# --- LÓGICA DE ACCESO ---
 def login_screen():
     db = AuditDatabase()
     st.title("🔐 Acceso al Sistema de Auditoría")
@@ -90,26 +87,26 @@ def login_screen():
     tab1, tab2 = st.tabs(["Iniciar Sesión", "Registrarse como Auditor"])
     
     with tab1:
-        email = st.text_input("Correo Electrónico")
-        password = st.text_input("Contraseña", type="password")
+        email = st.text_input("Correo Electrónico", key="login_email")
+        password = st.text_input("Contraseña", type="password", key="login_pass")
         if st.button("Ingresar", use_container_width=True):
             cursor = db.conn.cursor()
             h_pass = db.hash_password(password)
             cursor.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (email, h_pass))
             user = cursor.fetchone()
             if user:
-                st.session_state.user_id = user[0]
-                st.session_state.user_name = user[1]
+                # AQUÍ SE CREA LA SESIÓN
+                st.session_state['user_id'] = user[0]
+                st.session_state['user_name'] = user[1]
                 st.rerun()
             else:
                 st.error("Correo o contraseña incorrectos.")
 
     with tab2:
-        st.subheader("Crear Cuenta de Auditor")
-        new_name = st.text_input("Nombres y Apellidos")
-        new_email = st.text_input("Correo Electrónico (Usuario)")
-        new_pass = st.text_input("Nueva Contraseña", type="password", help="Mínimo 8 caracteres, 1 Mayúscula, 1 Número y 1 Carácter especial")
-        conf_pass = st.text_input("Confirmar Contraseña", type="password")
+        new_name = st.text_input("Nombres y Apellidos", key="reg_name")
+        new_email = st.text_input("Correo Electrónico", key="reg_email")
+        new_pass = st.text_input("Nueva Contraseña", type="password", key="reg_pass")
+        conf_pass = st.text_input("Confirmar Contraseña", type="password", key="reg_conf")
         
         if st.button("Registrarme", use_container_width=True):
             if new_pass != conf_pass:
@@ -124,23 +121,26 @@ def login_screen():
                         cursor.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?, ?, ?)", 
                                      (new_email, new_name, db.hash_password(new_pass)))
                         db.conn.commit()
-                        st.success("¡Registro exitoso! Ahora puedes iniciar sesión.")
+                        st.success("¡Registro exitoso! Ya puedes iniciar sesión.")
                     except sqlite3.IntegrityError:
                         st.error("Este correo ya está registrado.")
-                else:
-                    st.warning("Por favor completa todos los campos.")
 
-# --- INTERFAZ PRINCIPAL (DESPUÉS DEL LOGIN) ---
+# --- INTERFAZ PRINCIPAL ---
 def main_app():
+    # Verificación de seguridad adicional
+    if 'user_name' not in st.session_state:
+        st.session_state.user_id = None
+        st.rerun()
+        
     db = AuditDatabase()
     
-    # Barra lateral
     with st.sidebar:
-        st.title(f"👨‍🏫 Auditor: {st.session_state.user_name}")
+        st.title(f"👨‍🏫 Auditor:")
+        st.write(st.session_state.user_name)
         st.markdown("---")
         if st.button("Cerrar Sesión"):
-            del st.session_state.user_id
-            del st.session_state.user_name
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
         
         st.header("➕ Nuevo Encargo")
@@ -155,7 +155,6 @@ def main_app():
                 st.success("Guardado.")
                 st.rerun()
 
-    # Dashboard
     st.title("⚖️ Panel de Gestión de Auditorías")
     df_clientes = pd.read_sql_query(
         "SELECT id, client_name as 'Cliente', audit_year as 'Año', created_at as 'Fecha Creación' FROM clients WHERE user_id = ?", 
@@ -169,7 +168,6 @@ def main_app():
             st.download_button("📥 Excel", generar_excel(df_clientes), "auditoria.xlsx", "application/vnd.ms-excel")
             st.download_button("📥 PDF", generar_pdf(df_clientes, st.session_state.user_name), "auditoria.pdf", "application/pdf")
 
-        # Eliminación
         st.markdown("---")
         seleccionar_todos = st.toggle("Seleccionar todos para borrar")
         df_sel = df_clientes.copy()
@@ -180,16 +178,15 @@ def main_app():
         
         seleccionados = tabla[tabla["Seleccionar"] == True]["id"].tolist()
         if seleccionados:
-            confirmar = st.text_input("Escribe ELIMINAR para confirmar:")
-            if st.button("Eliminar permanentemente", type="primary") and confirmar == "ELIMINAR":
+            confirmar = st.text_input("Escribe ELIMINAR para borrar:")
+            if st.button("Eliminar Seleccionados", type="primary") and confirmar == "ELIMINAR":
                 cursor = db.conn.cursor()
                 cursor.execute(f"DELETE FROM clients WHERE id IN ({','.join(['?']*len(seleccionados))})", seleccionados)
                 db.conn.commit()
                 st.rerun()
     else:
-        st.info("Aún no tienes clientes asignados.")
+        st.info("No tienes clientes registrados aún.")
 
-# --- EJECUCIÓN ---
 if __name__ == "__main__":
     if 'user_id' not in st.session_state:
         login_screen()
