@@ -1,79 +1,50 @@
 import hashlib
-import io
 import sqlite3
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
-from datetime import datetime
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AuditPro - Papeles de Trabajo", layout="wide")
 
-# --- ESTILOS CSS PERSONALIZADOS (Para que se parezca a la imagen) ---
+# --- ESTILOS CSS PERSONALIZADOS ---
 st.markdown("""
     <style>
-    .step-header { color: #d32f2f; font-weight: bold; font-size: 16px; }
-    .section-header { background-color: #f0f2f6; padding: 5px; font-weight: bold; border-left: 5px solid #004080; }
-    .stTextArea textarea { background-color: #fffef0; } /* Color nota amarilla tipo post-it */
+    .step-header { color: #d32f2f; font-weight: bold; font-size: 16px; margin-top: 10px; }
+    .stTextArea textarea { background-color: #fffef0; border: 1px solid #ddd; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXIÓN Y BASE DE DATOS ---
+# --- BASE DE DATOS Y ESTRUCTURA ---
 def get_db_connection():
     return sqlite3.connect('audit_management.db', timeout=10, check_same_thread=False)
 
 def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Tabla Usuarios
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE, full_name TEXT, password_hash TEXT)''')
-    
-    # Tabla Clientes (Encargos)
     cursor.execute('''CREATE TABLE IF NOT EXISTS clients (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         client_name TEXT, client_nit TEXT, audit_year INTEGER,
         tipo_encargo TEXT, estado TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    
-    # NUEVA TABLA: Pasos de Auditoría (El "Programa de Trabajo")
     cursor.execute('''CREATE TABLE IF NOT EXISTS audit_steps (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        client_id INTEGER,
-        section_name TEXT,      -- Ej: Aceptación/continuación
-        step_code TEXT,         -- Ej: 1000, 2000
-        description TEXT,       -- El texto rojo de la imagen
-        instructions TEXT,      -- Guía o Template oculto
-        user_notes TEXT,        -- Lo que escribe el auditor
-        status TEXT DEFAULT 'Pendiente',
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE)''')
-
-    # NUEVA TABLA: Archivos Adjuntos (Evidencias)
+        id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER,
+        section_name TEXT, step_code TEXT, description TEXT, 
+        instructions TEXT, user_notes TEXT, status TEXT DEFAULT 'Pendiente',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS step_files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        step_id INTEGER,
-        file_name TEXT,
-        file_data BLOB,
-        file_type TEXT,
-        upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(step_id) REFERENCES audit_steps(id) ON DELETE CASCADE)''')
-
+        id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER,
+        file_name TEXT, file_data BLOB, file_type TEXT)''')
     conn.commit()
     conn.close()
 
 create_tables()
 
-# --- FUNCIONES DE LÓGICA ---
-def hash_pass(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-# Función para INICIALIZAR los pasos de la imagen cuando se crea un cliente nuevo
-# --- 1. ESTA ES LA VARIABLE (El contenido de tus imágenes) ---
+# --- TEMPLATE DE AUDITORÍA (NIA - TUS IMÁGENES) ---
 TEMPLATE_AUDITORIA = [
-    # SECCIÓN 100
     ("100 - Aceptación y continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente, incorporar el resumen y actualizar en función de los acontecimientos.", "Instrucciones: Revise la integridad de la gerencia. Sub-fase: A Other Required steps."),
     ("100 - Aceptación y continuación de clientes", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP (Quality Review Partner).", "Instrucciones: Evaluar si es entidad de interés público o alto riesgo."),
     ("100 - Aceptación y continuación de clientes", "4000", "(ISA 200, 220, 300) Considerar el cumplimiento de requisitos éticos, las amenazas a la independencia y las protecciones relacionadas, y preparar/aprobar el resumen.", "Instrucciones: Completar confirmaciones de independencia."),
@@ -84,218 +55,154 @@ TEMPLATE_AUDITORIA = [
     ("100 - Aceptación y continuación de clientes", "4100", "Confirmación de independencia individual (Communications file).", "Instrucciones: Firma de todo el equipo."),
     ("100 - Aceptación y continuación de clientes", "4200", "Confirmación de independencia de una oficina PwC del exterior.", "Instrucciones: Solo auditoría de grupo."),
     ("100 - Aceptación y continuación de clientes", "6000", "(ISA 510) Contactarse con los auditores anteriores.", "Instrucciones: Comunicación con auditor predecesor."),
-
-    # SECCIÓN 150
     ("150 - Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo.", "Instrucciones: Asignación de recursos."),
     ("150 - Administración del proyecto", "3000", "(ISA 300) Preparar y monitorear el avance con relación al plan del proyecto.", "Instrucciones: Control de ejecución."),
     ("150 - Administración del proyecto", "2000", "Discutir y acordar objetivos de desarrollo personal para todos los miembros del equipo.", "Instrucciones: Reunión de inicio."),
-
-    # SECCIÓN 1100
     ("1100 - Comprensión del cliente y de la industria", "1000", "(ISA 315) Obtener o actualizar la comprensión del cliente y el ambiente en el que opera.", "Instrucciones: Entendimiento del negocio."),
     ("1100 - Comprensión del cliente y de la industria", "1500", "(ISA 315, ISA 520) Realizar procedimientos de revisión analítica preliminares.", "Instrucciones: Variaciones significativas."),
     ("1100 - Comprensión del cliente y de la industria", "3000", "Revisar las actas de reuniones y asambleas y obtener y revisar los nuevos contratos y acuerdos significativos.", "Instrucciones: Resumen de actas."),
     ("1100 - Comprensión del cliente y de la industria", "1750", "Prepararse para y realizar la reunión de tipo 'demostrativo' con el directorio.", "Instrucciones: Reunión con Gobierno Corporativo."),
-
-    # SECCIÓN 1250 Y 1700
     ("1250 - Evaluación del riesgo de fraude", "1000", "(ISA 240, ISA 315) Evaluar y responder al riesgo de fraude.", "Instrucciones: Triángulo del fraude."),
     ("1700 - Evaluación del riesgo/significatividad", "2000", "(ISA 250, ISA 315) Obtener una comprensión general de las leyes y reglamentaciones.", "Instrucciones: Matriz legal.")
 ]
 
-# --- 2. ESTA ES LA FUNCIÓN QUE PROCESA LO ANTERIOR ---
+# --- FUNCIONES DE APOYO ---
+def hash_pass(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def inicializar_programa_auditoria(client_id):
     conn = get_db_connection()
-    # Borramos por si acaso había algo viejo
     conn.execute("DELETE FROM audit_steps WHERE client_id = ?", (client_id,))
-    
-    # Insertamos los pasos de la variable TEMPLATE_AUDITORIA
     for seccion, codigo, desc, instr in TEMPLATE_AUDITORIA:
-        conn.execute("""INSERT INTO audit_steps 
-                     (client_id, section_name, step_code, description, instructions) 
-                     VALUES (?, ?, ?, ?, ?)""",
+        conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
                      (client_id, seccion, codigo, desc, instr))
     conn.commit()
     conn.close()
 
-# --- VISTA: DETALLE DE AUDITORÍA (PAPELES DE TRABAJO) ---
-def vista_papeles_trabajo(client_id, client_name):
-    st.markdown(f"## 📂 Papeles de Trabajo: {client_name}")
-    
-    if st.button("⬅️ Volver al Panel Principal"):
-        del st.session_state['active_client_id']
-        st.rerun()
+def generar_pdf(df, auditor):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", 'B', 16); pdf.cell(190, 10, "REPORTE DE ENCARGOS", ln=True, align='C')
+    pdf.set_font("Helvetica", '', 10); pdf.cell(190, 10, f"Auditor: {auditor}", ln=True, align='C'); pdf.ln(10)
+    pdf.set_font("Helvetica", 'B', 9)
+    for col, w in zip(["Cliente", "NIT", "Año", "Estado"], [70, 40, 30, 40]): pdf.cell(w, 10, col, 1, 0, 'C')
+    pdf.ln()
+    pdf.set_font("Helvetica", '', 8)
+    for _, row in df.iterrows():
+        est = str(row['Estado']).replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", "")
+        pdf.cell(70, 10, str(row['Cliente'])[:35], 1); pdf.cell(40, 10, str(row['NIT']), 1)
+        pdf.cell(30, 10, str(row['Año']), 1); pdf.cell(40, 10, est, 1); pdf.ln()
+    return bytes(pdf.output())
 
-    conn = get_db_connection()
-    
-    # Obtener pasos
-    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id = ? ORDER BY section_name, step_code", conn, params=(client_id,))
-    
-    if steps.empty:
-        st.warning("⚠️ Este encargo no tiene programa de auditoría cargado.")
-        if st.button("🔄 Cargar Programa Estándar (NIA/ISA)"):
-            inicializar_programa_auditoria(client_id)
-            st.rerun()
-    else:
-        # Agrupar por secciones (Como en la imagen: 100, 150, etc.)
-        secciones = steps['section_name'].unique()
-        
-        for seccion in secciones:
-            with st.expander(f"📁 {seccion}", expanded=True):
-                pasos_seccion = steps[steps['section_name'] == seccion]
-                
-                for _, row in pasos_seccion.iterrows():
-                    step_id = row['id']
-                    
-                    # Estructura visual del paso (Rojo como pediste)
-                    st.markdown(f"<div class='step-header'>🚩 {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
-                    
-                    # Contenedor del trabajo (simulando documento)
-                    c1, c2 = st.columns([3, 1])
-                    
-                    with c1:
-                        # 1. Instrucciones ocultables (Template)
-                        with st.expander("📘 Ver Guía / Template del Procedimiento"):
-                            st.info(row['instructions'])
-                        
-                        # 2. Espacio de trabajo (Word-like simple)
-                        notas = st.text_area(f"📝 Desarrollo del paso {row['step_code']}", 
-                                           value=row['user_notes'] if row['user_notes'] else "",
-                                           height=150,
-                                           key=f"note_{step_id}",
-                                           placeholder="Escriba aquí el desarrollo del procedimiento, conclusiones, o inserte viñetas...")
-                        
-                        if st.button(f"💾 Guardar Nota {row['step_code']}", key=f"btn_save_{step_id}"):
-                            conn.execute("UPDATE audit_steps SET user_notes = ? WHERE id = ?", (notas, step_id))
-                            conn.commit()
-                            st.toast("Nota guardada", icon="✅")
-
-                    with c2:
-                        # 3. Estado del paso
-                        st.caption("Estado:")
-                        estado_actual = row['status']
-                        nuevo_estado = st.selectbox("", ["Pendiente", "En Proceso", "Revisado", "Cerrado"], 
-                                                  index=["Pendiente", "En Proceso", "Revisado", "Cerrado"].index(estado_actual),
-                                                  key=f"status_{step_id}", label_visibility="collapsed")
-                        
-                        if nuevo_estado != estado_actual:
-                            conn.execute("UPDATE audit_steps SET status = ? WHERE id = ?", (nuevo_estado, step_id))
-                            conn.commit()
-                            st.rerun()
-
-                        # 4. Adjuntos (Archivos)
-                        st.divider()
-                        st.caption("📎 Evidencias (Word, Excel, PDF)")
-                        uploaded_file = st.file_uploader("", type=['docx', 'xlsx', 'pdf', 'jpg', 'png'], key=f"file_{step_id}", label_visibility="collapsed")
-                        
-                        if uploaded_file:
-                            binary_data = uploaded_file.read()
-                            conn.execute("INSERT INTO step_files (step_id, file_name, file_data, file_type) VALUES (?, ?, ?, ?)",
-                                         (step_id, uploaded_file.name, binary_data, uploaded_file.type))
-                            conn.commit()
-                            st.toast("Archivo adjunto", icon="📎")
-                            st.rerun()
-
-                        # Listar archivos existentes
-                        files = pd.read_sql_query("SELECT id, file_name, file_data FROM step_files WHERE step_id = ?", conn, params=(step_id,))
-                        if not files.empty:
-                            for _, f_row in files.iterrows():
-                                st.download_button(f"⬇️ {f_row['file_name']}", data=f_row['file_data'], file_name=f_row['file_name'], key=f"dl_{f_row['id']}")
-
-                    st.markdown("---") # Separador entre pasos
-    
-    conn.close()
-
-# --- VISTA PRINCIPAL (MODIFICADA PARA IR AL DETALLE) ---
-def vista_principal():
-    with st.sidebar:
-        st.title(f"👨‍💼 Auditor: {st.session_state.user_name}")
-        if st.button("Cerrar Sesión"):
-            for key in list(st.session_state.keys()): del st.session_state[key]
-            st.rerun()
-        
-        st.divider()
-        st.subheader("➕ Nuevo Encargo")
-        c_name = st.text_input("Nombre Cliente")
-        c_nit = st.text_input("NIT")
-        c_year = st.number_input("Año", value=2025)
-        c_tipo = st.selectbox("Tipo", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Interna"])
-        
-        if st.button("Crear Encargo"):
-            if c_name and c_nit:
-                conn = get_db_connection()
-                cur = conn.cursor()
-                cur.execute("INSERT INTO clients (user_id, client_name, client_nit, audit_year, tipo_encargo, estado) VALUES (?,?,?,?,?,?)",
-                             (st.session_state.user_id, c_name, c_nit, c_year, c_tipo, "🔴 Pendiente"))
-                new_client_id = cur.lastrowid # Obtenemos el ID del nuevo cliente
-                conn.commit()
-                conn.close()
-                
-                # AUTOMÁTICAMENTE CARGAMOS LA ESTRUCTURA DE LA IMAGEN
-                inicializar_programa_auditoria(new_client_id)
-                
-                st.success("Encargo creado con programa de auditoría base.")
-                st.rerun()
-
-    # Si hay un cliente seleccionado, mostramos sus papeles de trabajo
-    if 'active_client_id' in st.session_state:
-        vista_papeles_trabajo(st.session_state.active_client_id, st.session_state.active_client_name)
-    else:
-        # PANTALLA DE LISTADO (DASHBOARD)
-        st.image("https://cdn-icons-png.flaticon.com/512/9334/9334544.png", width=80) 
-        st.title("💼 Encargos de Auditoría")
-                
-        conn = get_db_connection()
-        df = pd.read_sql_query("SELECT id, client_name, client_nit, audit_year, estado FROM clients WHERE user_id = ? ORDER BY created_at DESC", 
-                               conn, params=(st.session_state.user_id,))
-        conn.close()
-
-        if not df.empty:
-            for _, row in df.iterrows():
-                with st.container():
-                    col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
-                    with col1: st.subheader(f"🏢 {row['client_name']}")
-                    with col2: st.caption(f"NIT: {row['client_nit']}")
-                    with col3: st.caption(f"Estado: {row['estado']}")
-                    with col4:
-                        # ESTE BOTÓN ABRE EL EXPEDIENTE DETALLADO
-                        if st.button(f"📂 Abrir Expediente", key=f"open_{row['id']}"):
-                            st.session_state.active_client_id = row['id']
-                            st.session_state.active_client_name = row['client_name']
-                            st.rerun()
-                    st.divider()
-        else:
-            st.info("No tienes encargos activos. Crea uno en la barra lateral.")
-
-# --- LOGIN (SIN CAMBIOS) ---
+# --- VISTAS ---
 def vista_login():
     st.title("⚖️ AuditPro: Sistema para Contadores")
     t1, t2 = st.tabs(["🔐 Iniciar Sesión", "📝 Registrar Auditor"])
     with t1:
-        e = st.text_input("Correo", key="log_user")
-        p = st.text_input("Clave", type="password", key="log_pass")
-        if st.button("Entrar"):
+        e = st.text_input("Correo electrónico", key="l_user")
+        p = st.text_input("Contraseña", type="password", key="l_pass")
+        if st.button("Ingresar"):
             conn = get_db_connection()
             u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
             conn.close()
-            if u:
-                st.session_state.user_id = u[0]
-                st.session_state.user_name = u[1]
-                st.rerun()
-            else: st.error("Datos incorrectos")
+            if u: st.session_state.user_id, st.session_state.user_name = u[0], u[1]; st.rerun()
+            else: st.error("Credenciales incorrectas")
     with t2:
-        n = st.text_input("Nombre")
-        em = st.text_input("Email Reg")
-        ps = st.text_input("Clave Reg", type="password")
-        if st.button("Registrar"):
-            try:
-                conn = get_db_connection()
-                conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (em, n, hash_pass(ps)))
-                conn.commit()
-                st.success("Registrado. Ahora ingresa.")
-            except: st.error("Error al registrar.")
+        n = st.text_input("Nombre Completo")
+        em = st.text_input("Correo Institucional")
+        ps = st.text_input("Contraseña", type="password")
+        ps_c = st.text_input("Confirmar Contraseña", type="password") # REINCORPORADO
+        if st.button("Crear mi cuenta"):
+            if ps != ps_c: st.error("Las contraseñas no coinciden")
+            elif len(ps) < 4: st.error("Clave muy corta")
+            else:
+                try:
+                    conn = get_db_connection()
+                    conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (em, n, hash_pass(ps)))
+                    conn.commit(); conn.close(); st.success("¡Registro exitoso! Ya puedes iniciar sesión.")
+                except: st.error("El correo ya existe")
+
+def vista_papeles_trabajo(client_id, client_name):
+    st.markdown(f"## 📂 Expediente Digital: {client_name}")
+    if st.button("⬅️ Volver a Encargos"): del st.session_state['active_id']; st.rerun()
+    
+    conn = get_db_connection()
+    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id = ? ORDER BY section_name, step_code", conn, params=(client_id,))
+    
+    if steps.empty:
+        if st.button("🔄 Cargar Programa NIA"): inicializar_programa_auditoria(client_id); st.rerun()
+    else:
+        for seccion in steps['section_name'].unique():
+            with st.expander(f"📁 {seccion}", expanded=True):
+                for _, row in steps[steps['section_name'] == seccion].iterrows():
+                    sid = row['id']
+                    st.markdown(f"<div class='step-header'>🚩 {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        with st.expander("📘 Guía Metodológica"): st.info(row['instructions'])
+                        notas = st.text_area("Desarrollo / Hallazgos", value=row['user_notes'] if row['user_notes'] else "", key=f"n_{sid}", height=100)
+                        if st.button("💾 Guardar", key=f"s_{sid}"):
+                            conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid)); conn.commit(); st.toast("Guardado")
+                    with c2:
+                        nuevo_est = st.selectbox("Estado", ["Pendiente", "En Proceso", "Cerrado"], index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
+                        if nuevo_est != row['status']:
+                            conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo_est, sid)); conn.commit(); st.rerun()
+                        up_file = st.file_uploader("Adjuntar", key=f"f_{sid}")
+                        if up_file:
+                            conn.execute("INSERT INTO step_files (step_id, file_name, file_data, file_type) VALUES (?,?,?,?)", (sid, up_file.name, up_file.read(), up_file.type))
+                            conn.commit(); st.rerun()
+                        files = pd.read_sql_query("SELECT id, file_name, file_data FROM step_files WHERE step_id=?", conn, params=(sid,))
+                        for _, f in files.iterrows(): st.download_button(f"⬇️ {f['file_name']}", f['file_data'], f['file_name'], key=f"d_{f['id']}")
+    conn.close()
+
+def vista_principal():
+    with st.sidebar:
+        st.title(f"👨‍💼 {st.session_state.user_name}")
+        if st.button("Cerrar Sesión"):
+            for k in list(st.session_state.keys()): del st.session_state[k]
+            st.rerun()
+        st.divider()
+        st.subheader("➕ Nuevo Encargo")
+        c_n = st.text_input("Empresa"); c_t = st.text_input("NIT")
+        
+        # LINKS REINCORPORADOS
+        st.caption("Consultas Oficiales:")
+        col1, col2 = st.columns(2)
+        col1.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
+        col2.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
+        
+        c_y = st.number_input("Año", value=2025); c_tp = st.selectbox("Tipo", ["Revisoría Fiscal", "Auditoría Externa"])
+        if st.button("💾 Crear"):
+            if c_n and c_t:
+                conn = get_db_connection(); cur = conn.cursor()
+                cur.execute("INSERT INTO clients (user_id, client_name, client_nit, audit_year, tipo_encargo, estado) VALUES (?,?,?,?,?,?)", (st.session_state.user_id, c_n, c_t, c_y, c_tp, "🔴 Pendiente"))
+                cid = cur.lastrowid; conn.commit(); conn.close()
+                inicializar_programa_auditoria(cid); st.success("Creado"); st.rerun()
+    
+    if 'active_id' in st.session_state: vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
+    else:
+        st.image("https://cdn-icons-png.flaticon.com/512/9334/9334544.png", width=80) 
+        st.title("💼 Encargos de Auditoría")
+        q = st.text_input("🔍 Buscar por NIT o Nombre")
+        conn = get_db_connection()
+        df = pd.read_sql_query("SELECT id, client_name as Cliente, client_nit as NIT, audit_year as Año, estado as Estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
+        conn.close()
+        if q: df = df[df['Cliente'].str.contains(q, case=False) | df['NIT'].str.contains(q, case=False)]
+        
+        if not df.empty:
+            c_a, c_b = st.columns(2)
+            c_a.download_button("📊 Excel", df.to_csv(index=False).encode('utf-8'), "encargos.csv")
+            c_b.download_button("📕 PDF", generar_pdf(df, st.session_state.user_name), "reporte.pdf")
+            for _, r in df.iterrows():
+                with st.container():
+                    cols = st.columns([3, 2, 2, 2])
+                    cols[0].write(f"**{r['Cliente']}**"); cols[1].write(f"NIT: {r['NIT']}")
+                    cols[2].write(f"{r['Estado']}")
+                    if cols[3].button("📂 Abrir", key=f"btn_{r['id']}"):
+                        st.session_state.active_id, st.session_state.active_name = r['id'], r['Cliente']; st.rerun()
+                    st.divider()
+        else: st.info("No hay encargos registrados.")
 
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
-
-
-
