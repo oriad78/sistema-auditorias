@@ -220,7 +220,7 @@ def vista_principal():
     else:
         # PANTALLA DE LISTADO (DASHBOARD)
         st.image("https://cdn-icons-png.flaticon.com/512/2645/2645853.png", width=80) 
-        st.title("📊 Panel de Control de Auditorías")
+        st.title("📊 Encargos de Auditoría")
         
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT id, client_name, client_nit, audit_year, estado FROM clients WHERE user_id = ? ORDER BY created_at DESC", 
@@ -275,3 +275,4 @@ def vista_login():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
