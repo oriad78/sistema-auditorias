@@ -49,7 +49,7 @@ create_tables()
 TEMPLATE_AUDITORIA = [
     ("100 - Aceptación y continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente, incorporar el resumen y actualizar en función de los acontecimientos.", "Instrucciones: Revise la integridad de la gerencia."),
     ("100 - Aceptación y continuación de clientes", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP (Quality Review Partner).", "Instrucciones: Evaluar si es entidad de interés público."),
-    ("100 - Aceptación y continuación de clientes", "4000", "(ISA 200, 220, 300) Considerar el cumplimiento de requisitos éticos e independencia. , las amenazas a la independencia y las protecciones relacionadas, y preparar/aprobar el resumen.", "Instrucciones: Completar confirmaciones de independencia."),
+    ("100 - Aceptación y continuación de clientes", "4000", "(ISA 200, 220, 300) Considerar el cumplimiento de requisitos éticos e independencia las amenazas a la independencia y las protecciones relacionadas y preparar/aprobar el resumen.", "Instrucciones: Completar confirmaciones de independencia."),
     ("100 - Aceptación y continuación de clientes", "4010", "Realizar otras tareas específicas relativas a independencia.", "Instrucciones: Revisar servicios no auditoría."),
     ("100 - Aceptación y continuación de clientes", "5000", "(ISA 210, 300) Asegurarse de que la carta de contratación esté actualizada y firmada.", "Instrucciones: Adjuntar Carta de Encargo."),
     ("100 - Aceptación y continuación de clientes", "1200", "(ISA 600) Considerar el alcance de la participación en la auditoría del grupo.", "Instrucciones: Multilocation audit."),
@@ -341,6 +341,7 @@ if __name__ == "__main__":
         vista_login()
     else:
         vista_principal()
+
 
 
 
