@@ -22,17 +22,15 @@ def get_db_connection():
 def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Tablas base
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, tipo_trabajo TEXT, estado TEXT DEFAULT "Pendiente", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
     cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
     
-    # --- MIGRACIÓN: Verificar si falta la columna tipo_trabajo ---
+    # MIGRACIÓN: Asegurar que existe la columna tipo_trabajo
     try:
         cursor.execute('SELECT tipo_trabajo FROM clients LIMIT 1')
     except sqlite3.OperationalError:
-        # Si da error, es porque la columna no existe, entonces la añadimos
         cursor.execute('ALTER TABLE clients ADD COLUMN tipo_trabajo TEXT DEFAULT "Auditoría"')
     
     conn.commit()
@@ -88,120 +86,81 @@ def vista_login():
                 conn.close()
                 if u: st.session_state.user_id, st.session_state.user_name = u[0], u[1]; st.rerun()
                 else: st.error("Acceso denegado")
-    with tab2:
-        with st.form("registro"):
-            n = st.text_input("Nombre Completo"); em = st.text_input("Email"); ps = st.text_input("Clave", type="password")
-            if st.form_submit_button("Crear Usuario"):
-                conn = get_db_connection()
-                try:
-                    conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (em, n, hash_pass(ps)))
-                    conn.commit(); st.success("Registrado correctamente")
-                except: st.error("El correo ya existe")
-                finally: conn.close()
 
-# --- VISTA: EXPEDIENTE NIA ---
+# --- VISTA: PAPELERÍA ---
 def vista_papeles_trabajo(client_id, client_name):
     conn = get_db_connection()
     st.markdown(f"## 📂 Expediente: {client_name}")
-    
     col_v, col_e = st.columns([1, 5])
     if col_v.button("⬅️ Volver"): del st.session_state.active_id; conn.close(); st.rerun()
     editar = col_e.toggle("⚙️ Configurar Encargo")
 
     if editar:
         with st.container(border=True):
-            st.subheader("🛠️ Gestión del Encargo")
-            if st.button("🔄 Sincronizar Pasos (Agregar 4010 si falta)"):
+            if st.button("🔄 Sincronizar Pasos (Incluir 4010)"):
                 num = sincronizar_pasos_faltantes(client_id)
-                st.success(f"Sincronización finalizada. {num} pasos nuevos agregados."); st.rerun()
-            if st.checkbox("Zona de peligro: Borrar encargo"):
-                if st.button("🗑️ ELIMINAR ESTE ENCARGO DEFINITIVAMENTE"):
+                st.success(f"Se agregaron {num} pasos."); st.rerun()
+            if st.checkbox("Borrar encargo"):
+                if st.button("🗑️ ELIMINAR"):
                     conn.execute("DELETE FROM clients WHERE id=?", (client_id,))
                     conn.execute("DELETE FROM audit_steps WHERE client_id=?", (client_id,))
                     conn.commit(); conn.close(); del st.session_state.active_id; st.rerun()
 
     steps_df = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
-    
-    if steps_df.empty:
-        if st.button("🚀 Cargar Programa Maestro"): inicializar_programa_auditoria(client_id); st.rerun()
-    else:
+    if not steps_df.empty:
         for seccion in steps_df['section_name'].unique():
             with st.expander(f"📁 {seccion}", expanded=True):
                 pasos = steps_df[steps_df['section_name'] == seccion]
                 for _, row in pasos.iterrows():
                     sid = row['id']
                     st.markdown(f"<div class='step-header'>🚩 {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
-                    
                     c_det, c_est = st.columns([3, 1])
                     with c_det:
                         notas = st.text_area("Desarrollo", value=row['user_notes'] or "", key=f"n_{sid}", height=80)
                         if st.button("💾 Guardar", key=f"s_{sid}"):
-                            conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid))
-                            conn.commit(); st.toast("Información guardada")
-                    
+                            conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid)); conn.commit(); st.toast("Guardado")
                     with c_est:
                         colores = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-                        st.markdown(f"**Estado:** {colores.get(row['status'], '⚪')} {row['status']}")
-                        nuevo_est = st.selectbox("Cambiar a:", ["Pendiente", "En Proceso", "Cerrado"], 
-                                               index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
-                        if nuevo_est != row['status']:
-                            conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo_est, sid)); conn.commit(); st.rerun()
-                        
-                        up = st.file_uploader("📎 Adjuntar", key=f"u_{sid}")
-                        if up:
-                            conn.execute("INSERT INTO step_files (step_id, file_name, file_data) VALUES (?,?,?)", (sid, up.name, up.read()))
-                            conn.commit(); st.rerun()
-                        
-                        files = conn.execute("SELECT id, file_name, file_data FROM step_files WHERE step_id=?", (sid,)).fetchall()
-                        for fid, fname, fdata in files:
-                            st.download_button(f"📄 {fname}", fdata, file_name=fname, key=f"d_{fid}")
+                        st.write(f"**Estado:** {colores.get(row['status'], '⚪')} {row['status']}")
+                        nuevo = st.selectbox("Cambiar:", ["Pendiente", "En Proceso", "Cerrado"], index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
+                        if nuevo != row['status']:
+                            conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo, sid)); conn.commit(); st.rerun()
     conn.close()
 
-# --- DASHBOARD ---
+# --- VISTA: DASHBOARD ---
 def vista_principal():
     with st.sidebar:
         st.write(f"Auditor: **{st.session_state.user_name}**")
         if st.button("Cerrar Sesión"): del st.session_state.user_id; st.rerun()
         st.divider()
         st.subheader("➕ Nuevo Encargo")
-        cn = st.text_input("Empresa")
-        ct = st.text_input("NIT")
-        tipo_t = st.selectbox("Tipo de Trabajo", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria", "Otros"])
+        cn = st.text_input("Empresa"); ct = st.text_input("NIT")
+        tipo_t = st.selectbox("Tipo", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria", "Otros"])
         estado_i = st.selectbox("Estado Inicial", ["🔴 Pendiente", "🟡 En Proceso", "🟢 Cerrado"])
-        estado_limpio = estado_i.split(" ")[1]
-
         if st.button("Crear"):
             conn = get_db_connection(); cur = conn.cursor()
             cur.execute("INSERT INTO clients (user_id, client_name, client_nit, tipo_trabajo, estado) VALUES (?,?,?,?,?)", 
-                       (st.session_state.user_id, cn, ct, tipo_t, estado_limpio))
+                       (st.session_state.user_id, cn, ct, tipo_t, estado_i.split(" ")[1]))
             cid = cur.lastrowid; conn.commit(); conn.close()
             inicializar_programa_auditoria(cid); st.rerun()
         st.divider()
         
+        # --- LINKS HORIZONTALES ACTUALIZADOS ---
         st.subheader("🔗 Consultas Rápidas")
-        c_r1, c_r2 = st.columns(2)
-        with c_r1: st.markdown("[🔍 RUES](https://www.rues.org.co/)")
-        with c_r2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRut.faces)")
+        c1, c2 = st.columns(2)
+        with c1: st.markdown("[🔍 RUES](https://www.rues.org.co/)")
+        with c2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
 
     if 'active_id' in st.session_state:
         vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
     else:
         st.title("💼 Gestión de Auditoría")
         conn = get_db_connection()
-        # Aquí ya no fallará porque la migración añadió la columna si faltaba
         df = pd.read_sql_query("SELECT id, client_name, client_nit, tipo_trabajo, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
-        
         for _, r in df.iterrows():
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
                 c1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
-                c2.write(f"_{r.get('tipo_trabajo', 'Auditoría')}_")
-                colores_lista = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-                c3.write(f"{colores_lista.get(r['estado'], '⚪')} {r['estado']}")
-                if c4.button("Abrir", key=f"btn_{r['id']}"):
-                    st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
-        conn.close()
-
-if __name__ == "__main__":
-    if 'user_id' not in st.session_state: vista_login()
-    else: vista_principal()
+                c2.write(f"_{r['tipo_trabajo']}_")
+                cols_l = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
+                c3.write(f
