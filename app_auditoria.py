@@ -98,17 +98,6 @@ def inicializar_programa_auditoria(client_id):
         conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)", (client_id, sec, cod, desc, ins))
     conn.commit(); conn.close()
 
-def sincronizar_pasos_faltantes(client_id):
-    conn = get_db_connection()
-    existentes = [r[0] for r in conn.execute("SELECT step_code FROM audit_steps WHERE client_id = ?", (client_id,)).fetchall()]
-    agregados = 0
-    for sec, cod, desc, ins in TEMPLATE_AUDITORIA:
-        if cod not in existentes:
-            conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)", (client_id, sec, cod, desc, ins))
-            agregados += 1
-    conn.commit(); conn.close()
-    return agregados
-
 # --- COMPONENTES DE INTERFAZ ---
 def seccion_materialidad(client_id):
     st.subheader("📊 Cálculo de Materialidad (NIA 320)")
@@ -146,21 +135,23 @@ def vista_papeles_trabajo(client_id, client_name):
         c3.download_button("📕 PDF", data=crear_pdf(steps_df, client_name), file_name=f"Audit_{client_name}.pdf")
 
     steps_db = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
-    colores = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
+    cols_l = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
     
     for seccion in steps_db['section_name'].unique():
         with st.expander(f"📁 {seccion}", expanded=True):
             pasos = steps_db[steps_db['section_name'] == seccion]
             for _, row in pasos.iterrows():
                 sid = row['id']
-                st.markdown(f"<div class='step-header'>{colores.get(row['status'], '⚪')} {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
+                # Título con bolita de color
+                st.markdown(f"<div class='step-header'>{cols_l.get(row['status'], '⚪')} {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
+                
                 c_det, c_est, c_file = st.columns([3, 1, 1.5])
                 with c_det:
                     notas = st.text_area("Desarrollo", value=row['user_notes'] or "", key=f"n_{sid}", height=80)
                     if st.button("💾 Guardar", key=f"s_{sid}"):
                         conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid)); conn.commit(); st.toast("Guardado")
                 with c_est:
-                    st.write(f"**Estado:** {colores.get(row['status'], '⚪')}")
+                    st.write(f"**Estado:** {cols_l.get(row['status'], '⚪')}")
                     nuevo = st.selectbox("Cambiar:", ["Pendiente", "En Proceso", "Cerrado"], index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
                     if nuevo != row['status']:
                         conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo, sid)); conn.commit(); st.rerun()
@@ -236,9 +227,10 @@ def vista_principal():
         for _, r in df.iterrows():
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
-                c1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
+                # Bolita de color en la lista principal
+                c1.write(f"{cols_l.get(r['estado'], '⚪')} **{r['client_name']}** (NIT: {r['client_nit']})")
                 c2.write(f"_{r['tipo_trabajo']}_")
-                c3.write(f"{cols_l.get(r['estado'], '⚪')} {r['estado']}")
+                c3.write(f"{r['estado']}")
                 if c4.button("Abrir", key=f"b_{r['id']}"):
                     st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
         conn.close()
