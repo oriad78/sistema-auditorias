@@ -142,7 +142,6 @@ def vista_papeles_trabajo(client_id, client_name):
             pasos = steps_db[steps_db['section_name'] == seccion]
             for _, row in pasos.iterrows():
                 sid = row['id']
-                # Título con bolita de color
                 st.markdown(f"<div class='step-header'>{cols_l.get(row['status'], '⚪')} {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
                 
                 c_det, c_est, c_file = st.columns([3, 1, 1.5])
@@ -209,8 +208,6 @@ def vista_principal():
             cid = cur.lastrowid; conn.commit(); conn.close()
             inicializar_programa_auditoria(cid); st.rerun()
         st.divider()
-        
-        # --- LINKS HORIZONTALES (CORREGIDOS) ---
         st.subheader("🔗 Consultas Rápidas")
         c_r1, c_r2 = st.columns(2)
         with c_r1: st.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
@@ -227,7 +224,7 @@ def vista_principal():
         for _, r in df.iterrows():
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
-                # Bolita de color en la lista principal
+                # AQUÍ SE AGREGARON NUEVAMENTE LAS BOLITAS DE COLORES EN LA LISTA
                 c1.write(f"{cols_l.get(r['estado'], '⚪')} **{r['client_name']}** (NIT: {r['client_nit']})")
                 c2.write(f"_{r['tipo_trabajo']}_")
                 c3.write(f"{r['estado']}")
