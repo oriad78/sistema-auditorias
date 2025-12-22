@@ -238,31 +238,11 @@ def vista_papeles_trabajo(client_id, client_name):
                     st.warning("Encargo eliminado correctamente.")
                     st.rerun()
         st.markdown("---")
-        # BOTÓN PARA EDITAR DATOS GENERALES
-        editar = st.toggle("⚙️ Editar Datos del Encargo")
 
-    # --- ZONA DE EDICIÓN (Solo aparece si se activa el toggle) ---
-    if editar:
-        st.info("Sugerencia: Modifique los datos y presione 'Actualizar Datos Generales'")
-        with st.container(border=True):
-            new_n = st.text_input("Nombre de la Empresa", value=c_data[0])
-            new_t = st.text_input("NIT", value=c_data[1])
-            col_ed1, col_ed2, col_ed3 = st.columns(3)
-            new_y = col_ed1.number_input("Año", value=c_data[2])
-            new_tp = col_ed2.selectbox("Tipo de Encargo", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"], 
-                                      index=["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"].index(c_data[3]) if c_data[3] in ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"] else 0)
-            new_es = col_ed3.selectbox("Estado Global", ["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"],
-                                      index=["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"].index(c_data[4]) if c_data[4] in ["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"] else 0)
-            
-            if st.button("✅ Actualizar Datos Generales"):
-                conn.execute("""UPDATE clients SET client_name=?, client_nit=?, audit_year=?, tipo_encargo=?, estado=? 
-                             WHERE id=?""", (new_n, new_t, new_y, new_tp, new_es, client_id))
-                conn.commit()
-                st.session_state.active_name = new_n # Actualizamos el nombre en la sesión
-                st.success("Datos actualizados correctamente")
-                st.rerun()
-        st.divider()
-
+    # --- RESTO DEL CÓDIGO (Programa de Auditoría) ---
+    # (Aquí sigue el bloque de código que muestra los expedientes NIA que ya tenías)
+    # ...
+    conn.close()
     # --- LISTADO DE PASOS NIA (Resto del código igual) ---
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id = ? ORDER BY section_name, step_code", conn, params=(client_id,))
     
@@ -356,6 +336,7 @@ if __name__ == "__main__":
         vista_login()
     else:
         vista_principal()
+
 
 
 
