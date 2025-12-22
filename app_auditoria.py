@@ -15,18 +15,26 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- BASE DE DATOS ---
+# --- BASE DE DATOS Y MIGRACIONES ---
 def get_db_connection():
     return sqlite3.connect('audit_management.db', timeout=10, check_same_thread=False)
 
 def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
+    # Tablas base
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT)')
-    # Se añade la columna tipo_trabajo a la tabla clients
     cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, tipo_trabajo TEXT, estado TEXT DEFAULT "Pendiente", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
     cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
+    
+    # --- MIGRACIÓN: Verificar si falta la columna tipo_trabajo ---
+    try:
+        cursor.execute('SELECT tipo_trabajo FROM clients LIMIT 1')
+    except sqlite3.OperationalError:
+        # Si da error, es porque la columna no existe, entonces la añadimos
+        cursor.execute('ALTER TABLE clients ADD COLUMN tipo_trabajo TEXT DEFAULT "Auditoría"')
+    
     conn.commit()
     conn.close()
 
@@ -158,22 +166,8 @@ def vista_principal():
         st.subheader("➕ Nuevo Encargo")
         cn = st.text_input("Empresa")
         ct = st.text_input("NIT")
-        
-        # Selección del Tipo de Trabajo
-        tipo_t = st.selectbox("Tipo de Trabajo", [
-            "Revisoría Fiscal", 
-            "Auditoría Externa", 
-            "Auditoría Tributaria", 
-            "Otros Servicios"
-        ])
-        
-        # Selección de Estado Inicial con Bolitas de Colores
-        estado_i = st.selectbox("Estado Inicial", [
-            "🔴 Pendiente", 
-            "🟡 En Proceso", 
-            "🟢 Cerrado"
-        ])
-        # Limpiamos el emoji para guardar solo el texto del estado
+        tipo_t = st.selectbox("Tipo de Trabajo", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria", "Otros"])
+        estado_i = st.selectbox("Estado Inicial", ["🔴 Pendiente", "🟡 En Proceso", "🟢 Cerrado"])
         estado_limpio = estado_i.split(" ")[1]
 
         if st.button("Crear"):
@@ -184,31 +178,26 @@ def vista_principal():
             inicializar_programa_auditoria(cid); st.rerun()
         st.divider()
         
-        # Enlaces horizontales
         st.subheader("🔗 Consultas Rápidas")
         c_r1, c_r2 = st.columns(2)
-        with c_r1:
-            st.markdown("[🔍 RUES](https://www.rues.org.co/)")
-        with c_r2:
-            st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRut.faces)")
+        with c_r1: st.markdown("[🔍 RUES](https://www.rues.org.co/)")
+        with c_r2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRut.faces)")
 
     if 'active_id' in st.session_state:
         vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
     else:
         st.title("💼 Gestión de Auditoría")
         conn = get_db_connection()
+        # Aquí ya no fallará porque la migración añadió la columna si faltaba
         df = pd.read_sql_query("SELECT id, client_name, client_nit, tipo_trabajo, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
         
         for _, r in df.iterrows():
             with st.container(border=True):
-                # Se ajustan columnas para mostrar el Tipo de Trabajo y el Estado con bolitas
                 c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
                 c1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
-                c2.write(f"_{r['tipo_trabajo']}_")
-                
+                c2.write(f"_{r.get('tipo_trabajo', 'Auditoría')}_")
                 colores_lista = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
                 c3.write(f"{colores_lista.get(r['estado'], '⚪')} {r['estado']}")
-                
                 if c4.button("Abrir", key=f"btn_{r['id']}"):
                     st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
         conn.close()
