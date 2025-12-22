@@ -171,3 +171,4 @@ def vista_principal():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
