@@ -148,7 +148,7 @@ def vista_principal():
         # --- LINKS HORIZONTALES ACTUALIZADOS ---
         st.subheader("🔗 Consultas Rápidas")
         c1, c2 = st.columns(2)
-        with c1: st.markdown("[🔍 RUES](https://www.rues.org.co/)")
+        with c1: st.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
         with c2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
 
     if 'active_id' in st.session_state:
@@ -171,4 +171,5 @@ def vista_principal():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
 
