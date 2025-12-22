@@ -181,7 +181,6 @@ def vista_login():
 
 # --- VISTA: PAPELES DE TRABAJO ---
 def vista_papeles_trabajo(client_id, client_name):
-    # Recuperamos los datos actuales del cliente para los campos de edición
     conn = get_db_connection()
     c_data = conn.execute("SELECT client_name, client_nit, audit_year, tipo_encargo, estado FROM clients WHERE id = ?", (client_id,)).fetchone()
     
@@ -194,6 +193,51 @@ def vista_papeles_trabajo(client_id, client_name):
             if 'active_id' in st.session_state: del st.session_state['active_id']
             st.rerun()
     with col_nav2:
+        editar = st.toggle("⚙️ Configurar Encargo")
+
+    # --- PANEL DE CONFIGURACIÓN Y ELIMINACIÓN ---
+    if editar:
+        st.markdown("---")
+        col_ed_izq, col_ed_der = st.columns([2, 1])
+        
+        with col_ed_izq:
+            st.subheader("📝 Editar Datos Generales")
+            with st.container(border=True):
+                new_n = st.text_input("Nombre de la Empresa", value=c_data[0])
+                new_t = st.text_input("NIT", value=c_data[1])
+                col_ed1, col_ed2, col_ed3 = st.columns(3)
+                new_y = col_ed1.number_input("Año", value=c_data[2])
+                new_tp = col_ed2.selectbox("Tipo de Encargo", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"], 
+                                          index=["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"].index(c_data[3]) if c_data[3] in ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"] else 0)
+                new_es = col_ed3.selectbox("Estado Global", ["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"],
+                                          index=["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"].index(c_data[4]) if c_data[4] in ["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"] else 0)
+                
+                if st.button("💾 Guardar Cambios"):
+                    conn.execute("""UPDATE clients SET client_name=?, client_nit=?, audit_year=?, tipo_encargo=?, estado=? 
+                                 WHERE id=?""", (new_n, new_t, new_y, new_tp, new_es, client_id))
+                    conn.commit()
+                    st.session_state.active_name = new_n
+                    st.success("✅ Datos actualizados")
+                    st.rerun()
+
+        with col_ed_der:
+            st.subheader("⚠️ Zona de Peligro")
+            with st.container(border=True):
+                st.write("Esta acción eliminará todos los papeles de trabajo y archivos adjuntos.")
+                # Confirmación visual
+                confirmar_borrado = st.checkbox("Confirmo que deseo borrar todo")
+                if st.button("🗑️ Eliminar este Encargo", type="secondary", disabled=not confirmar_borrado):
+                    # Borramos en cascada (pasos, archivos y cliente)
+                    conn.execute("DELETE FROM step_files WHERE step_id IN (SELECT id FROM audit_steps WHERE client_id=?)", (client_id,))
+                    conn.execute("DELETE FROM audit_steps WHERE client_id=?", (client_id,))
+                    conn.execute("DELETE FROM clients WHERE id=?", (client_id,))
+                    conn.commit()
+                    conn.close()
+                    
+                    if 'active_id' in st.session_state: del st.session_state['active_id']
+                    st.warning("Encargo eliminado correctamente.")
+                    st.rerun()
+        st.markdown("---")
         # BOTÓN PARA EDITAR DATOS GENERALES
         editar = st.toggle("⚙️ Editar Datos del Encargo")
 
@@ -312,5 +356,6 @@ if __name__ == "__main__":
         vista_login()
     else:
         vista_principal()
+
 
 
