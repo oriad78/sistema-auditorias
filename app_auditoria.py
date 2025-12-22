@@ -163,4 +163,11 @@ def vista_principal():
                 c1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
                 c2.write(f"_{r['tipo_trabajo']}_")
                 cols_l = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-                c3.write(f
+                c3.write(f"{cols_l.get(r['estado'], '⚪')} {r['estado']}")
+                if c4.button("Abrir", key=f"b_{r['id']}"):
+                    st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
+        conn.close()
+
+if __name__ == "__main__":
+    if 'user_id' not in st.session_state: vista_login()
+    else: vista_principal()
