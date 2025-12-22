@@ -4,263 +4,190 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 from fpdf import FPDF
-from io import BytesIO
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="AuditPro - Sistema Integral", layout="wide")
+st.set_page_config(page_title="AuditPro + NIA Compliance", layout="wide")
 
-# --- ESTILOS CSS (RESTAURADOS Y MEJORADOS) ---
+# --- ESTILOS CSS ---
 st.markdown("""
     <style>
-    .step-header { color: #d32f2f; font-weight: bold; font-size: 15px; margin-top: 10px; }
-    .stTextArea textarea { background-color: #fffef0; border: 1px solid #ddd; }
-    .instruction-box { 
-        background-color: #e3f2fd; 
-        border-left: 5px solid #2196f3; 
-        padding: 15px; 
-        margin-bottom: 10px; 
-        border-radius: 5px;
-        font-size: 14px;
-        color: #0d47a1;
-    }
-    .report-preview {
-        background-color: white; padding: 30px; border: 1px solid #ccc;
-        font-family: 'Times New Roman', serif; line-height: 1.5;
-    }
+    .step-header { color: #d32f2f; font-weight: bold; font-size: 15px; margin-top: 5px; }
+    .instruction-box { background-color: #e3f2fd; border-left: 5px solid #2196f3; padding: 10px; border-radius: 5px; font-size: 14px; color: #0d47a1; }
+    .audit-log { font-size: 12px; color: #666; font-style: italic; }
+    .materiality-box { background-color: #f1f8e9; border: 1px solid #8bc34a; padding: 15px; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- BASE DE DATOS (MANTENIENDO TU ESTRUCTURA) ---
+# --- GESTIÓN DE BASE DE DATOS ---
 def get_db_connection():
-    return sqlite3.connect('audit_management.db', timeout=10, check_same_thread=False)
+    return sqlite3.connect('audit_pro_v2.db', timeout=10, check_same_thread=False)
 
 def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
+    # Usuarios y Clientes
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, tipo_trabajo TEXT, estado TEXT DEFAULT "Pendiente", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente", updated_at TIMESTAMP)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB, file_hash TEXT)')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS materiality 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, 
-                     benchmark TEXT, benchmark_value REAL, percentage REAL, planned_materiality REAL, performance_materiality REAL)''')
-    cursor.execute('CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, user_name TEXT, action TEXT, timestamp TIMESTAMP)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, tipo_trabajo TEXT, estado TEXT DEFAULT "Pendiente")')
+    
+    # NIA 230: Papeles de trabajo y Logs (Audit Trail)
+    cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
+    cursor.execute('CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, user_name TEXT, action TEXT, timestamp DATETIME)')
+    
+    # NIA 320: Materialidad
+    cursor.execute('CREATE TABLE IF NOT EXISTS materiality (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, benchmark_type TEXT, benchmark_value REAL, percentage REAL, planned_materiality REAL, tolerable_error REAL)')
+    
+    # Archivos
+    cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
+    
     conn.commit()
     conn.close()
 
 create_tables()
 
-# --- TU PLANTILLA MAESTRA ORIGINAL (CONSERVADA) ---
-TEMPLATE_AUDITORIA = [
-    ("100 - Aceptación y continuación", "1000", "(ISA 220, 300) Evaluar la aceptación del cliente", "Revise la integridad de la gerencia, antecedentes penales y reputación en el mercado. Documente si existe algún conflicto de intereses."),
-    ("100 - Aceptación y continuación", "2000", "(ISA 220) Designar un QRP (Quality Review Partner)", "Evaluar si la complejidad del encargo requiere un socio de revisión de calidad independiente para asegurar el cumplimiento normativo."),
-    ("1100 - Administración", "1000", "(ISA 315) Entendimiento del cliente y su ambiente", "Realice un análisis del sector, marco regulatorio y naturaleza de la entidad. Incluya el sistema de información y control interno."),
-    ("1100 - Administración", "5000", "(ISA 210) Carta de compromiso", "Asegúrese de que la carta de encargo esté firmada por el representante legal y cubra el alcance de la auditoría 2024-2025.")
-]
-
+# --- FUNCIONES LÓGICAS ---
 def hash_pass(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def log_action(client_id, action):
+def registrar_log(step_id, user_name, action):
     conn = get_db_connection()
-    conn.execute("INSERT INTO audit_log (client_id, user_name, action, timestamp) VALUES (?,?,?,?)", 
-                 (client_id, st.session_state.user_name, action, datetime.now()))
+    conn.execute("INSERT INTO audit_logs (step_id, user_name, action, timestamp) VALUES (?,?,?,?)",
+                 (step_id, user_name, action, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
 
-# --- MOTOR DE REPORTES (NIA 700) ---
-def generar_pdf_final(client_name, nit, opinion, hallazgos, auditor):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(190, 10, "INFORME DE AUDITORÍA INDEPENDIENTE", ln=True, align='C')
-    pdf.ln(10)
-    pdf.set_font("Arial", 'B', 11)
-    pdf.cell(190, 10, f"A los Accionistas de {client_name}", ln=True)
-    pdf.set_font("Arial", '', 10)
-    pdf.multi_cell(190, 7, f"Hemos auditado los estados financieros de la entidad con NIT {nit}...")
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 11)
-    pdf.cell(190, 10, "Opinión", ln=True)
-    pdf.set_font("Arial", '', 10)
-    pdf.multi_cell(190, 7, f"En nuestra opinión, la cual calificamos como {opinion.upper()}, los estados financieros...")
-    if hallazgos:
-        pdf.ln(5)
-        pdf.set_font("Arial", 'B', 11)
-        pdf.cell(190, 10, "Fundamentos y Hallazgos", ln=True)
-        pdf.set_font("Arial", '', 10)
-        pdf.multi_cell(190, 7, hallazgos)
-    pdf.ln(20)
-    pdf.cell(190, 10, f"Firma: {auditor}", ln=True)
-    return pdf.output(dest='S').encode('latin-1')
+# --- PLANTILLA NIA ---
+TEMPLATE_AUDITORIA = [
+    ("100 - Aceptación", "1010", "(NIA 220) Evaluación de Integridad", "Evaluar antecedentes y ética del cliente."),
+    ("1100 - Planeación", "1110", "(NIA 300) Estrategia Global", "Documentar el alcance y tiempos del encargo."),
+    ("1100 - Planeación", "1120", "(NIA 315) Control Interno", "Identificar riesgos de error material.")
+]
 
-# --- VISTA PAPELES DE TRABAJO (TUS FUNCIONES + MEJORAS) ---
-def vista_papeles_trabajo(client_id, client_name):
+# --- VISTAS ---
+def vista_materialidad(client_id):
+    st.markdown("### 📊 Calculadora de Materialidad (NIA 320)")
     conn = get_db_connection()
-    st.markdown(f"## 📂 Expediente: {client_name}")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Papeles de Trabajo", "📊 Materialidad (NIA 320)", "📄 Informe Final (NIA 700)", "📜 Pista de Auditoría"])
-
-    with tab1:
-        if st.button("⬅️ Volver al Panel"):
-            del st.session_state.active_id
-            st.rerun()
-
-        steps_db = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
-        cols_l = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-        
-        for seccion in steps_db['section_name'].unique():
-            with st.expander(f"📁 {seccion}", expanded=True):
-                pasos = steps_db[steps_db['section_name'] == seccion]
-                for _, row in pasos.iterrows():
-                    sid = row['id']
-                    # TU ENCABEZADO ORIGINAL
-                    st.markdown(f"<div class='step-header'>{cols_l.get(row['status'], '⚪')} {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
-                    
-                    # TU BLOQUE DE INSTRUCCIÓN / GUÍA (RESTAURADO)
-                    if row['instructions']:
-                        st.markdown(f"<div class='instruction-box'><strong>💡 Guía de Auditoría:</strong><br>{row['instructions']}</div>", unsafe_allow_html=True)
-                    
-                    c_det, c_est, c_file = st.columns([3, 1, 1.5])
-                    with c_det:
-                        notas = st.text_area("Desarrollo de la Auditoría", value=row['user_notes'] or "", key=f"n_{sid}", height=150)
-                        if st.button("💾 Guardar Notas", key=f"s_{sid}"):
-                            conn.execute("UPDATE audit_steps SET user_notes=?, updated_at=? WHERE id=?", (notas, datetime.now(), sid))
-                            conn.commit()
-                            log_action(client_id, f"Guardó notas en paso {row['step_code']}")
-                            st.toast("Notas guardadas")
-
-                    with c_est:
-                        nuevo = st.selectbox("Cambiar Estado:", ["Pendiente", "En Proceso", "Cerrado"], 
-                                           index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
-                        if nuevo != row['status']:
-                            conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo, sid))
-                            conn.commit()
-                            log_action(client_id, f"Cambió estado a {nuevo} en {row['step_code']}")
-                            st.rerun()
-
-                    with c_file:
-                        up = st.file_uploader("Adjuntar Evidencia", key=f"up_{sid}")
-                        if up:
-                            data = up.read()
-                            f_hash = hashlib.sha256(data).hexdigest()
-                            conn.execute("INSERT INTO step_files (step_id, file_name, file_data, file_hash) VALUES (?,?,?,?)", (sid, up.name, data, f_hash))
-                            conn.commit()
-                            log_action(client_id, f"Subió archivo {up.name}")
-                            st.rerun()
-                        
-                        archivos = conn.execute("SELECT id, file_name, file_data FROM step_files WHERE step_id=?", (sid,)).fetchall()
-                        for fid, fname, fdata in archivos:
-                            col_n, col_d, col_dl = st.columns([3, 1, 1])
-                            col_n.caption(f"📄 {fname[:10]}")
-                            if col_d.button("🗑️", key=f"del_{fid}"):
-                                conn.execute("DELETE FROM step_files WHERE id=?", (fid,))
-                                conn.commit()
-                                st.rerun()
-                            col_dl.download_button("📥", data=fdata, file_name=fname, key=f"dl_{fid}")
-
-    with tab2:
-        st.subheader("Cálculo de Importancia Relativa")
-        col1, col2 = st.columns(2)
+    with st.container(border=True):
+        col1, col2, col3 = st.columns(3)
         with col1:
-            benchmark = st.selectbox("Base (Benchmark)", ["Activos", "Ingresos", "Utilidad"], key="bm")
-            v_base = st.number_input("Valor Base ($)", min_value=0.0)
+            base = st.selectbox("Benchmark", ["Utilidad neta", "Activos Totales", "Ingresos Totales"])
+            valor = st.number_input("Valor del Benchmark ($)", min_value=0.0)
         with col2:
-            p_mat = st.slider("Materialidad (%)", 0.5, 5.0, 1.0)
-            mat_p = v_base * (p_mat / 100)
-            st.metric("Materialidad Planeada", f"${mat_p:,.2f}")
-            if st.button("Guardar Estrategia"):
-                conn.execute("INSERT INTO materiality (client_id, benchmark, benchmark_value, percentage, planned_materiality) VALUES (?,?,?,?,?)", 
-                             (client_id, benchmark, v_base, p_mat, mat_p))
-                conn.commit()
-                st.success("Estrategia NIA 320 guardada")
-
-    with tab3:
-        st.subheader("Dictamen de Auditoría")
-        op = st.radio("Tipo de Opinión", ["Limpia", "Con Salvedades", "Adversa"])
-        incluir = st.checkbox("Extraer hallazgos automáticamente", value=True)
-        h_texto = ""
-        if incluir:
-            resumen = pd.read_sql_query("SELECT step_code, user_notes FROM audit_steps WHERE client_id=? AND user_notes IS NOT NULL", conn, params=(client_id,))
-            for _, r in resumen.iterrows(): h_texto += f"Paso {r['step_code']}: {r['user_notes']}\n"
+            porc = st.slider("% Materialidad", 0.5, 10.0, 1.0)
         
-        if st.button("🚀 Generar y Descargar PDF"):
-            nit_c = conn.execute("SELECT client_nit FROM clients WHERE id=?", (client_id,)).fetchone()[0]
-            pdf_bytes = generar_pdf_final(client_name, nit_c, op, h_texto, st.session_state.user_name)
-            st.download_button("📥 Click para descargar PDF", data=pdf_bytes, file_name=f"Informe_{client_name}.pdf")
-
-    with tab4:
-        st.subheader("Pista de Auditoría (Trazabilidad NIA 230)")
-        logs = pd.read_sql_query("SELECT timestamp, user_name, action FROM audit_log WHERE client_id=? ORDER BY timestamp DESC", conn, params=(client_id,))
-        st.dataframe(logs, use_container_width=True)
-
+        mp = valor * (porc / 100)
+        et = mp * 0.75
+        
+        with col3:
+            st.metric("Mat. Planeación", f"${mp:,.0f}")
+            st.metric("Error Tolerable", f"${et:,.0f}")
+            
+        if st.button("Fijar Materialidad"):
+            conn.execute("DELETE FROM materiality WHERE client_id=?", (client_id,))
+            conn.execute("INSERT INTO materiality (client_id, benchmark_type, benchmark_value, percentage, planned_materiality, tolerable_error) VALUES (?,?,?,?,?,?)",
+                         (client_id, base, valor, porc, mp, et))
+            conn.commit()
+            st.success("Materialidad guardada en papeles de trabajo.")
     conn.close()
 
-# --- VISTA PRINCIPAL (TU LÓGICA CONSERVADA) ---
+def vista_papeles(client_id, client_name):
+    st.title(f"📂 Expediente: {client_name}")
+    if st.button("⬅️ Regresar"):
+        del st.session_state.active_id
+        st.rerun()
+
+    vista_materialidad(client_id)
+    
+    conn = get_db_connection()
+    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=?", conn, params=(client_id,))
+    
+    for _, row in steps.iterrows():
+        with st.expander(f"🔹 {row['step_code']} - {row['description']} ({row['status']})"):
+            st.markdown(f"<div class='instruction-box'>{row['instructions']}</div>", unsafe_allow_html=True)
+            
+            nota_actual = st.text_area("Hallazgos y Conclusiones", value=row['user_notes'] or "", key=f"txt_{row['id']}")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                nuevo_estado = st.selectbox("Estado", ["Pendiente", "En Proceso", "Cerrado"], index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"st_{row['id']}")
+            
+            if st.button("💾 Guardar y Firmar", key=f"btn_{row['id']}"):
+                conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (nota_actual, nuevo_estado, row['id']))
+                conn.commit()
+                registrar_log(row['id'], st.session_state.user_name, f"Cambió estado a {nuevo_estado} y actualizó notas.")
+                st.toast("Cambios registrados con éxito")
+                st.rerun()
+            
+            # Mostrar Audit Trail (NIA 230)
+            logs = conn.execute("SELECT user_name, action, timestamp FROM audit_logs WHERE step_id=? ORDER BY timestamp DESC", (row['id'],)).fetchall()
+            if logs:
+                st.markdown("**Historial de Cambios (Audit Trail):**")
+                for l_user, l_act, l_time in logs:
+                    st.markdown(f"<div class='audit-log'>• {l_time} - {l_user}: {l_act}</div>", unsafe_allow_html=True)
+    conn.close()
+
 def vista_principal():
     with st.sidebar:
-        st.write(f"Auditor: **{st.session_state.user_name}**")
-        if st.button("Cerrar Sesión"):
-            del st.session_state.user_id
+        st.header(f"👤 {st.session_state.user_name}")
+        if st.button("Salir"):
+            st.session_state.clear()
             st.rerun()
         st.divider()
-        st.subheader("➕ Nuevo Encargo")
-        cn = st.text_input("Empresa")
-        ct = st.text_input("NIT")
-        tipo = st.selectbox("Tipo", ["Revisoría Fiscal", "Auditoría Externa", "Otros"])
-        if st.button("Crear"):
+        st.subheader("🆕 Nuevo Cliente")
+        n_nom = st.text_input("Nombre Empresa")
+        n_nit = st.text_input("NIT")
+        if st.button("Crear Auditoría"):
             conn = get_db_connection()
             cur = conn.cursor()
-            cur.execute("INSERT INTO clients (user_id, client_name, client_nit, tipo_trabajo) VALUES (?,?,?,?)", (st.session_state.user_id, cn, ct, tipo))
+            cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_nom, n_nit))
             cid = cur.lastrowid
-            # TU TEMPLATE ORIGINAL SE INSERTA AQUÍ
             for sec, cod, desc, ins in TEMPLATE_AUDITORIA:
                 conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)", (cid, sec, cod, desc, ins))
             conn.commit()
-            log_action(cid, "Creación de expediente")
-            conn.close()
             st.rerun()
 
     if 'active_id' in st.session_state:
-        vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
+        vista_papeles(st.session_state.active_id, st.session_state.active_name)
     else:
-        st.title("💼 Gestión de Auditoría")
+        st.title("💼 Mis Auditorías")
         conn = get_db_connection()
-        df = pd.read_sql_query("SELECT id, client_name, client_nit, tipo_trabajo, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
-        for _, r in df.iterrows():
+        cls = pd.read_sql_query("SELECT * FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
+        for _, r in cls.iterrows():
             with st.container(border=True):
-                c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
-                c1.write(f"**{r['client_name']}**")
-                c2.write(f"_{r['tipo_trabajo']}_")
-                c3.write(f"{r['estado']}")
-                if c4.button("Abrir", key=f"b_{r['id']}"):
+                col_a, col_b = st.columns([4, 1])
+                col_a.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
+                if col_b.button("Abrir", key=f"open_{r['id']}"):
                     st.session_state.active_id = r['id']
                     st.session_state.active_name = r['client_name']
                     st.rerun()
         conn.close()
 
 def vista_login():
-    st.title("⚖️ AuditPro")
-    t1, t2 = st.tabs(["Ingreso", "Registro"])
-    with t1:
-        with st.form("login"):
-            e, p = st.text_input("Correo"), st.text_input("Contraseña", type="password")
-            if st.form_submit_button("Entrar"):
-                conn = get_db_connection()
-                u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
-                conn.close()
-                if u: 
-                    st.session_state.user_id, st.session_state.user_name = u[0], u[1]
-                    st.rerun()
-                else: st.error("Acceso incorrecto")
-    with t2:
-        with st.form("reg"):
-            ne, nn, np = st.text_input("Email"), st.text_input("Nombre"), st.text_input("Clave", type="password")
-            if st.form_submit_button("Registrar"):
-                conn = get_db_connection()
-                conn.execute("INSERT OR IGNORE INTO users (email, full_name, password_hash) VALUES (?,?,?)", (ne, nn, hash_pass(np)))
+    st.title("⚖️ AuditPro: Sistema de Gestión de Auditoría")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Ingresar")
+        em = st.text_input("Correo")
+        pw = st.text_input("Clave", type="password")
+        if st.button("Entrar"):
+            conn = get_db_connection()
+            u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (em, hash_pass(pw))).fetchone()
+            if u:
+                st.session_state.user_id, st.session_state.user_name = u[0], u[1]
+                st.rerun()
+            else: st.error("Datos incorrectos")
+    with col2:
+        st.subheader("Registrarse")
+        r_em = st.text_input("Nuevo Correo")
+        r_fn = st.text_input("Nombre Completo")
+        r_pw = st.text_input("Nueva Clave", type="password")
+        if st.button("Crear Cuenta"):
+            conn = get_db_connection()
+            try:
+                conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (r_em, r_fn, hash_pass(r_pw)))
                 conn.commit()
-                st.success("Registrado.")
+                st.success("Cuenta creada. Ya puedes ingresar.")
+            except: st.error("El correo ya existe")
 
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
