@@ -14,6 +14,15 @@ st.markdown("""
     <style>
     .step-header { color: #d32f2f; font-weight: bold; font-size: 15px; margin-top: 5px; }
     .stTextArea textarea { background-color: #fffef0; border: 1px solid #ddd; }
+    .instruction-box { 
+        background-color: #e3f2fd; 
+        border-left: 5px solid #2196f3; 
+        padding: 10px; 
+        margin-bottom: 10px; 
+        border-radius: 5px;
+        font-size: 14px;
+        color: #0d47a1;
+    }
     .file-box { background-color: #f8f9fa; padding: 5px; border-radius: 5px; border: 1px solid #eee; margin-bottom: 2px; display: flex; justify-content: space-between; align-items: center; }
     </style>
 """, unsafe_allow_html=True)
@@ -30,7 +39,6 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
     cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
     
-    # Asegurar columna tipo_trabajo
     try:
         cursor.execute('SELECT tipo_trabajo FROM clients LIMIT 1')
     except sqlite3.OperationalError:
@@ -43,6 +51,14 @@ def create_tables():
     conn.close()
 
 create_tables()
+
+# --- PLANTILLA MAESTRA (Con Guías) ---
+TEMPLATE_AUDITORIA = [
+    ("100 - Aceptación y continuación", "1000", "(ISA 220, 300) Evaluar la aceptación del cliente", "Revise la integridad de la gerencia, antecedentes penales y reputación en el mercado. Documente si existe algún conflicto de intereses."),
+    ("100 - Aceptación y continuación", "2000", "(ISA 220) Designar un QRP (Quality Review Partner)", "Evaluar si la complejidad del encargo requiere un socio de revisión de calidad independiente para asegurar el cumplimiento normativo."),
+    ("1100 - Administración", "1000", "(ISA 315) Entendimiento del cliente y su ambiente", "Realice un análisis del sector, marco regulatorio y naturaleza de la entidad. Incluya el sistema de información y control interno."),
+    ("1100 - Administración", "5000", "(ISA 210) Carta de compromiso", "Asegúrese de que la carta de encargo esté firmada por el representante legal y cubra el alcance de la auditoría 2024-2025.")
+]
 
 # --- FUNCIONES DE EXPORTACIÓN ---
 def crear_pdf(df, client_name):
@@ -81,11 +97,20 @@ def vista_papeles_trabajo(client_id, client_name):
             pasos = steps_db[steps_db['section_name'] == seccion]
             for _, row in pasos.iterrows():
                 sid = row['id']
+                # Cabecera con bolita
                 st.markdown(f"<div class='step-header'>{cols_l.get(row['status'], '⚪')} {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
+                
+                # BLOQUE DE INSTRUCCIÓN / GUÍA (Lo que pediste)
+                if row['instructions']:
+                    st.markdown(f"""
+                        <div class='instruction-box'>
+                            <strong>💡 Guía de Auditoría:</strong><br>{row['instructions']}
+                        </div>
+                    """, unsafe_allow_html=True)
                 
                 c_det, c_est, c_file = st.columns([3, 1, 1.5])
                 with c_det:
-                    notas = st.text_area("Desarrollo", value=row['user_notes'] or "", key=f"n_{sid}", height=100)
+                    notas = st.text_area("Desarrollo de la Auditoría", value=row['user_notes'] or "", key=f"n_{sid}", height=150)
                     if st.button("💾 Guardar Notas", key=f"s_{sid}"):
                         conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid))
                         conn.commit()
@@ -102,10 +127,8 @@ def vista_papeles_trabajo(client_id, client_name):
                         st.rerun()
 
                 with c_file:
-                    # SUBIDA DE ARCHIVOS MEJORADA
-                    up = st.file_uploader("Adjuntar archivo", key=f"up_{sid}", label_visibility="collapsed")
+                    up = st.file_uploader("Adjuntar", key=f"up_{sid}", label_visibility="collapsed")
                     if up is not None:
-                        # Evitar duplicados comparando nombre y paso en la sesión
                         last_up_key = f"last_up_{sid}"
                         if st.session_state.get(last_up_key) != up.name:
                             conn.execute("INSERT INTO step_files (step_id, file_name, file_data) VALUES (?,?,?)", 
@@ -114,19 +137,14 @@ def vista_papeles_trabajo(client_id, client_name):
                             st.session_state[last_up_key] = up.name
                             st.rerun()
 
-                    # LISTADO DE ARCHIVOS CON BOTÓN DE ELIMINAR
                     archivos = conn.execute("SELECT id, file_name, file_data FROM step_files WHERE step_id=?", (sid,)).fetchall()
                     for fid, fname, fdata in archivos:
-                        col_name, col_del, col_dl = st.columns([3, 1, 1])
-                        col_name.markdown(f"📄 {fname[:15]}...")
-                        
-                        # Botón Eliminar
-                        if col_del.button("🗑️", key=f"del_{fid}"):
+                        col_n, col_d, col_dl = st.columns([3, 1, 1])
+                        col_n.markdown(f"📄 {fname[:10]}...")
+                        if col_d.button("🗑️", key=f"del_{fid}"):
                             conn.execute("DELETE FROM step_files WHERE id=?", (fid,))
                             conn.commit()
                             st.rerun()
-                        
-                        # Botón Descargar
                         col_dl.download_button("📥", data=fdata, file_name=fname, key=f"dl_{fid}")
     conn.close()
 
@@ -148,7 +166,6 @@ def vista_principal():
             cur.execute("INSERT INTO clients (user_id, client_name, client_nit, tipo_trabajo) VALUES (?,?,?,?)", 
                         (st.session_state.user_id, cn, ct, tipo))
             cid = cur.lastrowid
-            # Inicializar pasos
             for sec, cod, desc, ins in TEMPLATE_AUDITORIA:
                 conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)", 
                             (cid, sec, cod, desc, ins))
@@ -181,12 +198,6 @@ def vista_principal():
                     st.rerun()
         conn.close()
 
-# Se mantienen las funciones de hash_pass, vista_login y el bloque main igual al código anterior.
-TEMPLATE_AUDITORIA = [
-    ("100 - Aceptación", "1000", "Evaluar cliente", "Integridad"),
-    ("1100 - Comprensión", "1000", "Entendimiento negocio", "Análisis")
-]
-
 def hash_pass(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -200,7 +211,10 @@ def vista_login():
                 conn = get_db_connection()
                 u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
                 conn.close()
-                if u: st.session_state.user_id, st.session_state.user_name = u[0], u[1]; st.rerun()
+                if u: 
+                    st.session_state.user_id = u[0]
+                    st.session_state.user_name = u[1]
+                    st.rerun()
                 else: st.error("Acceso incorrecto")
 
 if __name__ == "__main__":
