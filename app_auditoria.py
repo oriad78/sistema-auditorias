@@ -2,6 +2,7 @@ import hashlib
 import sqlite3
 import pandas as pd
 import streamlit as st
+from io import BytesIO
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AuditPro - Sistema Integral", layout="wide")
@@ -12,6 +13,7 @@ st.markdown("""
     .step-header { color: #d32f2f; font-weight: bold; font-size: 15px; margin-top: 5px; }
     .stTextArea textarea { background-color: #fffef0; border: 1px solid #ddd; }
     .status-text { font-weight: bold; font-size: 14px; }
+    .materiality-box { background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #007bff; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -27,11 +29,16 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
     cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
     
-    # MIGRACIÓN: Asegurar que existe la columna tipo_trabajo
+    # MIGRACIÓN: tipo_trabajo y materialidad
     try:
         cursor.execute('SELECT tipo_trabajo FROM clients LIMIT 1')
     except sqlite3.OperationalError:
         cursor.execute('ALTER TABLE clients ADD COLUMN tipo_trabajo TEXT DEFAULT "Auditoría"')
+    
+    # Nueva tabla para Materialidad
+    cursor.execute('''CREATE TABLE IF NOT EXISTS materiality 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, 
+                      benchmark_value REAL, percentage REAL, planned_materiality REAL)''')
     
     conn.commit()
     conn.close()
@@ -87,16 +94,46 @@ def vista_login():
                 if u: st.session_state.user_id, st.session_state.user_name = u[0], u[1]; st.rerun()
                 else: st.error("Acceso denegado")
 
+# --- NUEVA FUNCIÓN: MATERIALIDAD ---
+def seccion_materialidad(client_id):
+    st.subheader("📊 Cálculo de Materialidad (NIA 320)")
+    conn = get_db_connection()
+    mat_data = conn.execute("SELECT benchmark_value, percentage, planned_materiality FROM materiality WHERE client_id=?", (client_id,)).fetchone()
+    
+    with st.container(border=True):
+        col1, col2, col3 = st.columns(3)
+        base = col1.number_input("Base (Activos, Ventas, Utilidad)", value=mat_data[0] if mat_data else 0.0)
+        porc = col2.slider("% Aplicable", 0.5, 5.0, mat_data[1] if mat_data else 1.0)
+        resultado = base * (porc / 100)
+        col3.metric("Materialidad Planeada", f"${resultado:,.2f}")
+        
+        if st.button("Guardar Materialidad"):
+            conn.execute("DELETE FROM materiality WHERE client_id=?", (client_id,))
+            conn.execute("INSERT INTO materiality (client_id, benchmark_value, percentage, planned_materiality) VALUES (?,?,?,?)", (client_id, base, porc, resultado))
+            conn.commit()
+            st.success("Materialidad actualizada")
+    conn.close()
+
 # --- VISTA: PAPELERÍA ---
 def vista_papeles_trabajo(client_id, client_name):
     conn = get_db_connection()
     st.markdown(f"## 📂 Expediente: {client_name}")
-    col_v, col_e = st.columns([1, 5])
+    
+    col_v, col_e, col_exp = st.columns([1, 3, 2])
     if col_v.button("⬅️ Volver"): del st.session_state.active_id; conn.close(); st.rerun()
-    editar = col_e.toggle("⚙️ Configurar Encargo")
+    editar = col_e.toggle("⚙️ Configurar / Materialidad")
+    
+    # EXPORTACIÓN EXCEL
+    steps_df = pd.read_sql_query("SELECT section_name, step_code, description, user_notes, status FROM audit_steps WHERE client_id=?", conn, params=(client_id,))
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        steps_df.to_excel(writer, index=False, sheet_name='Papeles')
+    col_exp.download_button("📥 Exportar Informe (Excel)", data=output.getvalue(), file_name=f"Auditoria_{client_name}.xlsx")
 
     if editar:
+        seccion_materialidad(client_id)
         with st.container(border=True):
+            st.write("🔧 Herramientas de Control")
             if st.button("🔄 Sincronizar Pasos (Incluir 4010)"):
                 num = sincronizar_pasos_faltantes(client_id)
                 st.success(f"Se agregaron {num} pasos."); st.rerun()
@@ -106,25 +143,36 @@ def vista_papeles_trabajo(client_id, client_name):
                     conn.execute("DELETE FROM audit_steps WHERE client_id=?", (client_id,))
                     conn.commit(); conn.close(); del st.session_state.active_id; st.rerun()
 
-    steps_df = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
     if not steps_df.empty:
         for seccion in steps_df['section_name'].unique():
             with st.expander(f"📁 {seccion}", expanded=True):
-                pasos = steps_df[steps_df['section_name'] == seccion]
-                for _, row in pasos.iterrows():
+                # Recargar pasos con ID para acciones
+                pasos_db = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND section_name=?", conn, params=(client_id, seccion))
+                for _, row in pasos_db.iterrows():
                     sid = row['id']
                     st.markdown(f"<div class='step-header'>🚩 {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
-                    c_det, c_est = st.columns([3, 1])
+                    c_det, c_est, c_file = st.columns([3, 1, 1])
+                    
                     with c_det:
                         notas = st.text_area("Desarrollo", value=row['user_notes'] or "", key=f"n_{sid}", height=80)
                         if st.button("💾 Guardar", key=f"s_{sid}"):
                             conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid)); conn.commit(); st.toast("Guardado")
+                    
                     with c_est:
                         colores = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-                        st.write(f"**Estado:** {colores.get(row['status'], '⚪')} {row['status']}")
+                        st.write(f"**Estado:** {colores.get(row['status'], '⚪')}")
                         nuevo = st.selectbox("Cambiar:", ["Pendiente", "En Proceso", "Cerrado"], index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
                         if nuevo != row['status']:
                             conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo, sid)); conn.commit(); st.rerun()
+                    
+                    with c_file:
+                        # CARGA DE ARCHIVOS
+                        uploaded_file = st.file_uploader("Adjuntar evidencia", key=f"f_{sid}")
+                        if uploaded_file is not None:
+                            file_bytes = uploaded_file.read()
+                            conn.execute("INSERT INTO step_files (step_id, file_name, file_data) VALUES (?,?,?)", (sid, uploaded_file.name, file_bytes))
+                            conn.commit()
+                            st.success("Archivo cargado")
     conn.close()
 
 # --- VISTA: DASHBOARD ---
@@ -145,10 +193,9 @@ def vista_principal():
             inicializar_programa_auditoria(cid); st.rerun()
         st.divider()
         
-        # --- LINKS HORIZONTALES ACTUALIZADOS ---
         st.subheader("🔗 Consultas Rápidas")
         c1, c2 = st.columns(2)
-        with c1: st.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
+        with c1: st.markdown("[🔍 RUES (Avanzado)](https://www.rues.org.co/busqueda-avanzada)")
         with c2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
 
     if 'active_id' in st.session_state:
@@ -171,5 +218,3 @@ def vista_principal():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
-
-
