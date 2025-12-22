@@ -181,4 +181,17 @@ def vista_principal():
         for _, r in df.iterrows():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 1, 1])
-                c1.write(f"**{r['client_name']}** (NIT: {r
+                c1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
+                
+                # --- BOLITAS EN LA LISTA PRINCIPAL ---
+                colores_lista = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
+                estado_actual = r['estado']
+                c2.write(f"{colores_lista.get(estado_actual, '⚪')} {estado_actual}")
+                
+                if c3.button("Abrir", key=f"btn_{r['id']}"):
+                    st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
+        conn.close()
+
+if __name__ == "__main__":
+    if 'user_id' not in st.session_state: vista_login()
+    else: vista_principal()
