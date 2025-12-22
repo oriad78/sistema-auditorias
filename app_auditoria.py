@@ -181,16 +181,51 @@ def vista_login():
 
 # --- VISTA: PAPELES DE TRABAJO ---
 def vista_papeles_trabajo(client_id, client_name):
-    st.markdown(f"## 📂 Expediente Digital: {client_name}")
-    if st.button("⬅️ Volver a Encargos"):
-        if 'active_id' in st.session_state: del st.session_state['active_id']
-        st.rerun()
-    
+    # Recuperamos los datos actuales del cliente para los campos de edición
     conn = get_db_connection()
+    c_data = conn.execute("SELECT client_name, client_nit, audit_year, tipo_encargo, estado FROM clients WHERE id = ?", (client_id,)).fetchone()
+    
+    st.markdown(f"## 📂 Expediente Digital: {client_name}")
+    
+    # --- BARRA DE ACCIONES SUPERIOR ---
+    col_nav1, col_nav2, col_nav3 = st.columns([2, 2, 4])
+    with col_nav1:
+        if st.button("⬅️ Volver a Encargos"):
+            if 'active_id' in st.session_state: del st.session_state['active_id']
+            st.rerun()
+    with col_nav2:
+        # BOTÓN PARA EDITAR DATOS GENERALES
+        editar = st.toggle("⚙️ Editar Datos del Encargo")
+
+    # --- ZONA DE EDICIÓN (Solo aparece si se activa el toggle) ---
+    if editar:
+        st.info("Sugerencia: Modifique los datos y presione 'Actualizar Datos Generales'")
+        with st.container(border=True):
+            new_n = st.text_input("Nombre de la Empresa", value=c_data[0])
+            new_t = st.text_input("NIT", value=c_data[1])
+            col_ed1, col_ed2, col_ed3 = st.columns(3)
+            new_y = col_ed1.number_input("Año", value=c_data[2])
+            new_tp = col_ed2.selectbox("Tipo de Encargo", ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"], 
+                                      index=["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"].index(c_data[3]) if c_data[3] in ["Revisoría Fiscal", "Auditoría Externa", "Auditoría Tributaria"] else 0)
+            new_es = col_ed3.selectbox("Estado Global", ["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"],
+                                      index=["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"].index(c_data[4]) if c_data[4] in ["🔴 Pendiente", "🟡 En Ejecución", "🟢 Finalizado"] else 0)
+            
+            if st.button("✅ Actualizar Datos Generales"):
+                conn.execute("""UPDATE clients SET client_name=?, client_nit=?, audit_year=?, tipo_encargo=?, estado=? 
+                             WHERE id=?""", (new_n, new_t, new_y, new_tp, new_es, client_id))
+                conn.commit()
+                st.session_state.active_name = new_n # Actualizamos el nombre en la sesión
+                st.success("Datos actualizados correctamente")
+                st.rerun()
+        st.divider()
+
+    # --- LISTADO DE PASOS NIA (Resto del código igual) ---
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id = ? ORDER BY section_name, step_code", conn, params=(client_id,))
     
     if steps.empty:
-        if st.button("🔄 Cargar Programa NIA"): inicializar_programa_auditoria(client_id); st.rerun()
+        if st.button("🔄 Cargar Programa NIA"): 
+            inicializar_programa_auditoria(client_id)
+            st.rerun()
     else:
         for seccion in steps['section_name'].unique():
             with st.expander(f"📁 {seccion}", expanded=True):
@@ -202,15 +237,22 @@ def vista_papeles_trabajo(client_id, client_name):
                         with st.expander("📘 Guía Metodológica"): st.info(row['instructions'])
                         notas = st.text_area("Desarrollo / Hallazgos", value=row['user_notes'] if row['user_notes'] else "", key=f"n_{sid}", height=100)
                         if st.button("💾 Guardar", key=f"s_{sid}"):
-                            conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid)); conn.commit(); st.toast("Guardado")
+                            conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid))
+                            conn.commit()
+                            st.toast("Guardado")
                     with c2:
-                        nuevo_est = st.selectbox("Estado", ["Pendiente", "En Proceso", "Cerrado"], index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
+                        nuevo_est = st.selectbox("Estado", ["Pendiente", "En Proceso", "Cerrado"], 
+                                               index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
                         if nuevo_est != row['status']:
-                            conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo_est, sid)); conn.commit(); st.rerun()
+                            conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo_est, sid))
+                            conn.commit()
+                            st.rerun()
                         up_file = st.file_uploader("Adjuntar", key=f"f_{sid}")
                         if up_file:
-                            conn.execute("INSERT INTO step_files (step_id, file_name, file_data, file_type) VALUES (?,?,?,?)", (sid, up_file.name, up_file.read(), up_file.type))
-                            conn.commit(); st.rerun()
+                            conn.execute("INSERT INTO step_files (step_id, file_name, file_data, file_type) VALUES (?,?,?,?)", 
+                                         (sid, up_file.name, up_file.read(), up_file.type))
+                            conn.commit()
+                            st.rerun()
     conn.close()
 
 # --- VISTA: PRINCIPAL (ENCARGOS) ---
@@ -270,4 +312,5 @@ if __name__ == "__main__":
         vista_login()
     else:
         vista_principal()
+
 
