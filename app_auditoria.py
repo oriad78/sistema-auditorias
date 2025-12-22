@@ -23,7 +23,7 @@ def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, estado TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, estado TEXT DEFAULT "Pendiente", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
     cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
     conn.commit()
@@ -111,7 +111,6 @@ def vista_papeles_trabajo(client_id, client_name):
                     conn.execute("DELETE FROM audit_steps WHERE client_id=?", (client_id,))
                     conn.commit(); conn.close(); del st.session_state.active_id; st.rerun()
 
-    # --- CARPETAS NIA ---
     steps_df = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
     
     if steps_df.empty:
@@ -132,16 +131,13 @@ def vista_papeles_trabajo(client_id, client_name):
                             conn.commit(); st.toast("Información guardada")
                     
                     with c_est:
-                        # ESTADOS CON BOLITAS
                         colores = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-                        st.markdown(f"**Estado actual:** {colores.get(row['status'], '⚪')} {row['status']}")
-                        
+                        st.markdown(f"**Estado:** {colores.get(row['status'], '⚪')} {row['status']}")
                         nuevo_est = st.selectbox("Cambiar a:", ["Pendiente", "En Proceso", "Cerrado"], 
                                                index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
                         if nuevo_est != row['status']:
                             conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo_est, sid)); conn.commit(); st.rerun()
                         
-                        # ARCHIVOS
                         up = st.file_uploader("📎 Adjuntar", key=f"u_{sid}")
                         if up:
                             conn.execute("INSERT INTO step_files (step_id, file_name, file_data) VALUES (?,?,?)", (sid, up.name, up.read()))
@@ -162,28 +158,27 @@ def vista_principal():
         cn = st.text_input("Empresa"); ct = st.text_input("NIT")
         if st.button("Crear"):
             conn = get_db_connection(); cur = conn.cursor()
-            cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, cn, ct))
+            cur.execute("INSERT INTO clients (user_id, client_name, client_nit, estado) VALUES (?,?,?,?)", (st.session_state.user_id, cn, ct, "Pendiente"))
             cid = cur.lastrowid; conn.commit(); conn.close()
             inicializar_programa_auditoria(cid); st.rerun()
         st.divider()
-        st.subheader("🔗 Consultas Externas")
-        st.markdown("[🔍 RUES](https://www.rues.org.co/)")
-        st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRut.faces)")
+        
+        # --- LINKS HORIZONTALES ---
+        st.subheader("🔗 Consultas Rápidas")
+        col_link1, col_link2 = st.columns(2)
+        with col_link1:
+            st.markdown("[🔍 RUES](https://www.rues.org.co/)")
+        with col_link2:
+            st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRut.faces)")
 
     if 'active_id' in st.session_state:
         vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
     else:
         st.title("💼 Gestión de Auditoría")
         conn = get_db_connection()
-        df = pd.read_sql_query("SELECT id, client_name, client_nit FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
-        conn.close()
+        df = pd.read_sql_query("SELECT id, client_name, client_nit, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
+        
         for _, r in df.iterrows():
             with st.container(border=True):
-                c1, c2 = st.columns([4, 1])
-                c1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
-                if c2.button("Abrir", key=f"btn_{r['id']}"):
-                    st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
-
-if __name__ == "__main__":
-    if 'user_id' not in st.session_state: vista_login()
-    else: vista_principal()
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(f"**{r['client_name']}** (NIT: {r
