@@ -182,6 +182,7 @@ def vista_login():
 # --- VISTA: PAPELES DE TRABAJO ---
 def vista_papeles_trabajo(client_id, client_name):
     conn = get_db_connection()
+    # Obtenemos los datos actualizados del cliente
     c_data = conn.execute("SELECT client_name, client_nit, audit_year, tipo_encargo, estado FROM clients WHERE id = ?", (client_id,)).fetchone()
     
     st.markdown(f"## 📂 Expediente Digital: {client_name}")
@@ -191,6 +192,7 @@ def vista_papeles_trabajo(client_id, client_name):
     with col_nav1:
         if st.button("⬅️ Volver a Encargos"):
             if 'active_id' in st.session_state: del st.session_state['active_id']
+            conn.close() # Cerramos antes de salir
             st.rerun()
     with col_nav2:
         editar = st.toggle("⚙️ Configurar Encargo")
@@ -218,37 +220,32 @@ def vista_papeles_trabajo(client_id, client_name):
                     conn.commit()
                     st.session_state.active_name = new_n
                     st.success("✅ Datos actualizados")
+                    conn.close() # Cerramos antes de recargar
                     st.rerun()
 
         with col_ed_der:
             st.subheader("⚠️ Zona de Peligro")
             with st.container(border=True):
-                st.write("Esta acción eliminará todos los papeles de trabajo y archivos adjuntos.")
-                # Confirmación visual
+                st.write("Esta acción es irreversible.")
                 confirmar_borrado = st.checkbox("Confirmo que deseo borrar todo")
                 if st.button("🗑️ Eliminar este Encargo", type="secondary", disabled=not confirmar_borrado):
-                    # Borramos en cascada (pasos, archivos y cliente)
                     conn.execute("DELETE FROM step_files WHERE step_id IN (SELECT id FROM audit_steps WHERE client_id=?)", (client_id,))
                     conn.execute("DELETE FROM audit_steps WHERE client_id=?", (client_id,))
                     conn.execute("DELETE FROM clients WHERE id=?", (client_id,))
                     conn.commit()
-                    conn.close()
-                    
+                    conn.close() # Cerramos antes de salir
                     if 'active_id' in st.session_state: del st.session_state['active_id']
-                    st.warning("Encargo eliminado correctamente.")
                     st.rerun()
         st.markdown("---")
 
-    # --- RESTO DEL CÓDIGO (Programa de Auditoría) ---
-    # (Aquí sigue el bloque de código que muestra los expedientes NIA que ya tenías)
-    # ...
-    conn.close()
-    # --- LISTADO DE PASOS NIA (Resto del código igual) ---
+    # --- LISTADO DE PASOS NIA ---
+    # Nota: Aquí la conexión 'conn' sigue abierta, evitando el ProgrammingError
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id = ? ORDER BY section_name, step_code", conn, params=(client_id,))
     
     if steps.empty:
         if st.button("🔄 Cargar Programa NIA"): 
             inicializar_programa_auditoria(client_id)
+            conn.close()
             st.rerun()
     else:
         for seccion in steps['section_name'].unique():
@@ -270,14 +267,22 @@ def vista_papeles_trabajo(client_id, client_name):
                         if nuevo_est != row['status']:
                             conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo_est, sid))
                             conn.commit()
+                            conn.close()
                             st.rerun()
                         up_file = st.file_uploader("Adjuntar", key=f"f_{sid}")
                         if up_file:
                             conn.execute("INSERT INTO step_files (step_id, file_name, file_data, file_type) VALUES (?,?,?,?)", 
                                          (sid, up_file.name, up_file.read(), up_file.type))
                             conn.commit()
+                            conn.close()
                             st.rerun()
-    conn.close()
+                        
+                        # Mostrar archivos para descargar
+                        files = pd.read_sql_query("SELECT id, file_name, file_data FROM step_files WHERE step_id=?", conn, params=(sid,))
+                        for _, f in files.iterrows():
+                            st.download_button(f"⬇️ {f['file_name']}", f['file_data'], f['file_name'], key=f"d_{f['id']}")
+    
+    conn.close() # Cierre final de seguridad
 
 # --- VISTA: PRINCIPAL (ENCARGOS) ---
 def vista_principal():
@@ -336,6 +341,7 @@ if __name__ == "__main__":
         vista_login()
     else:
         vista_principal()
+
 
 
 
