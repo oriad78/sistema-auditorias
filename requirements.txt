@@ -3,3 +3,4 @@ pandas
 openpyxl
 fpdf2
 xlsxwriter
+python-docx
