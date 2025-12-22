@@ -23,7 +23,8 @@ def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, estado TEXT DEFAULT "Pendiente", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
+    # Se añade la columna tipo_trabajo a la tabla clients
+    cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, tipo_trabajo TEXT, estado TEXT DEFAULT "Pendiente", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
     cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
     conn.commit()
@@ -33,14 +34,14 @@ create_tables()
 
 # --- PLANTILLA MAESTRA ---
 TEMPLATE_AUDITORIA = [
-    ("100 - Aceptación y continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Revise la integridad de la gerencia."),
-    ("100 - Aceptación y continuación de clientes", "2000", "(ISA 220) Designar un QRP (Quality Review Partner)", "Evaluar alto riesgo."),
-    ("100 - Aceptación y continuación de clientes", "4000", "(ISA 200, 220, 300) Requisitos éticos e independencia", "Confirmar independencia."),
-    ("100 - Aceptación y continuación de clientes", "4010", "Realizar otras tareas específicas relativas a independencia", "Verificar servicios no auditoría."),
-    ("100 - Aceptación y continuación de clientes", "5000", "(ISA 210, 300) Carta de contratación actualizada", "Adjuntar PDF firmado."),
-    ("150 - Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo", "Asignación recursos."),
-    ("1100 - Comprensión del cliente", "1000", "(ISA 315) Entendimiento del cliente y ambiente", "Análisis negocio."),
-    ("1250 - Evaluación del riesgo de fraude", "1000", "(ISA 240, 315) Responder al riesgo de fraude", "Triángulo fraude.")
+    ("100 - Aceptación y continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Revise la integridad de la gerencia."),
+    ("100 - Aceptación y continuación", "2000", "(ISA 220) Designar un QRP (Quality Review Partner)", "Evaluar alto riesgo."),
+    ("100 - Aceptación y continuación", "4000", "(ISA 200, 220, 300) Requisitos éticos e independencia", "Confirmar independencia."),
+    ("100 - Aceptación y continuación", "4010", "Realizar otras tareas específicas relativas a independencia", "Verificar servicios no auditoría."),
+    ("100 - Aceptación y continuación", "5000", "(ISA 210, 300) Carta de contratación actualizada", "Adjuntar PDF firmado."),
+    ("150 - Administración", "1000", "(ISA 300) Movilizar al equipo de trabajo", "Asignación recursos."),
+    ("1100 - Comprensión", "1000", "(ISA 315) Entendimiento del cliente y ambiente", "Análisis negocio."),
+    ("1250 - Riesgo de Fraude", "1000", "(ISA 240, 315) Responder al riesgo de fraude", "Triángulo fraude.")
 ]
 
 # --- FUNCIONES LÓGICAS ---
@@ -155,20 +156,40 @@ def vista_principal():
         if st.button("Cerrar Sesión"): del st.session_state.user_id; st.rerun()
         st.divider()
         st.subheader("➕ Nuevo Encargo")
-        cn = st.text_input("Empresa"); ct = st.text_input("NIT")
+        cn = st.text_input("Empresa")
+        ct = st.text_input("NIT")
+        
+        # Selección del Tipo de Trabajo
+        tipo_t = st.selectbox("Tipo de Trabajo", [
+            "Revisoría Fiscal", 
+            "Auditoría Externa", 
+            "Auditoría Tributaria", 
+            "Otros Servicios"
+        ])
+        
+        # Selección de Estado Inicial con Bolitas de Colores
+        estado_i = st.selectbox("Estado Inicial", [
+            "🔴 Pendiente", 
+            "🟡 En Proceso", 
+            "🟢 Cerrado"
+        ])
+        # Limpiamos el emoji para guardar solo el texto del estado
+        estado_limpio = estado_i.split(" ")[1]
+
         if st.button("Crear"):
             conn = get_db_connection(); cur = conn.cursor()
-            cur.execute("INSERT INTO clients (user_id, client_name, client_nit, estado) VALUES (?,?,?,?)", (st.session_state.user_id, cn, ct, "Pendiente"))
+            cur.execute("INSERT INTO clients (user_id, client_name, client_nit, tipo_trabajo, estado) VALUES (?,?,?,?,?)", 
+                       (st.session_state.user_id, cn, ct, tipo_t, estado_limpio))
             cid = cur.lastrowid; conn.commit(); conn.close()
             inicializar_programa_auditoria(cid); st.rerun()
         st.divider()
         
-        # --- LINKS HORIZONTALES ---
+        # Enlaces horizontales
         st.subheader("🔗 Consultas Rápidas")
-        col_link1, col_link2 = st.columns(2)
-        with col_link1:
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
             st.markdown("[🔍 RUES](https://www.rues.org.co/)")
-        with col_link2:
+        with c_r2:
             st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRut.faces)")
 
     if 'active_id' in st.session_state:
@@ -176,19 +197,19 @@ def vista_principal():
     else:
         st.title("💼 Gestión de Auditoría")
         conn = get_db_connection()
-        df = pd.read_sql_query("SELECT id, client_name, client_nit, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
+        df = pd.read_sql_query("SELECT id, client_name, client_nit, tipo_trabajo, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
         
         for _, r in df.iterrows():
             with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 1, 1])
+                # Se ajustan columnas para mostrar el Tipo de Trabajo y el Estado con bolitas
+                c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
                 c1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
+                c2.write(f"_{r['tipo_trabajo']}_")
                 
-                # --- BOLITAS EN LA LISTA PRINCIPAL ---
                 colores_lista = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-                estado_actual = r['estado']
-                c2.write(f"{colores_lista.get(estado_actual, '⚪')} {estado_actual}")
+                c3.write(f"{colores_lista.get(r['estado'], '⚪')} {r['estado']}")
                 
-                if c3.button("Abrir", key=f"btn_{r['id']}"):
+                if c4.button("Abrir", key=f"btn_{r['id']}"):
                     st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
         conn.close()
 
