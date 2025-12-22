@@ -14,7 +14,6 @@ st.markdown("""
     <style>
     .step-header { color: #d32f2f; font-weight: bold; font-size: 15px; margin-top: 5px; }
     .stTextArea textarea { background-color: #fffef0; border: 1px solid #ddd; }
-    .status-text { font-weight: bold; font-size: 14px; }
     .file-box { background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 1px dashed #ccc; margin-bottom: 5px; }
     </style>
 """, unsafe_allow_html=True)
@@ -42,15 +41,15 @@ def create_tables():
 
 create_tables()
 
-# --- PLANTILLA ---
+# --- PLANTILLA MAESTRA ---
 TEMPLATE_AUDITORIA = [
-    ("100 - Aceptación y continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continación", "Revise integridad."),
+    ("100 - Aceptación y continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación", "Revise integridad."),
     ("100 - Aceptación y continuación", "2000", "(ISA 220) Designar un QRP", "Evaluar riesgo."),
     ("100 - Aceptación y continuación", "4000", "(ISA 200, 220, 300) Ética e independencia", "Confirmar independencia."),
     ("150 - Administración", "1000", "(ISA 300) Movilizar al equipo", "Asignación recursos."),
 ]
 
-# --- FUNCIONES DE EXPORTACIÓN (CORREGIDAS) ---
+# --- FUNCIONES DE EXPORTACIÓN ---
 def crear_word(df, client_name):
     doc = Document()
     doc.add_heading(f'INFORME DE AUDITORÍA: {client_name.upper()}', 0)
@@ -80,8 +79,8 @@ def crear_pdf(df, client_name):
         pdf.cell(190, 7, f"ESTADO: {row['status']}", ln=True)
         pdf.multi_cell(190, 7, f"NOTAS: {row['user_notes'] or 'N/A'}")
     
-    # CORRECCIÓN AQUÍ: Para versiones nuevas de fpdf2
-    return pdf.output() 
+    # CORRECCIÓN DEFINITIVA: Retornar como bytes explícitos
+    return bytes(pdf.output())
 
 # --- FUNCIONES LÓGICAS ---
 def hash_pass(password):
@@ -105,7 +104,8 @@ def seccion_materialidad(client_id):
         res = base * (porc / 100)
         col3.metric("Materialidad", f"${res:,.2f}")
         if st.button("Guardar Materialidad"):
-            conn.execute("REPLACE INTO materiality (client_id, benchmark_value, percentage, planned_materiality) VALUES (?,?,?,?)", (client_id, base, porc, res))
+            conn.execute("INSERT OR REPLACE INTO materiality (id, client_id, benchmark_value, percentage, planned_materiality) VALUES ((SELECT id FROM materiality WHERE client_id=?),?,?,?,?)", 
+                        (client_id, client_id, base, porc, res))
             conn.commit(); st.success("Guardado")
     conn.close()
 
@@ -126,9 +126,12 @@ def vista_papeles_trabajo(client_id, client_name):
         c1.download_button("📊 Excel", data=out_ex.getvalue(), file_name=f"Audit_{client_name}.xlsx")
         c2.download_button("📝 Word", data=crear_word(steps_df, client_name), file_name=f"Audit_{client_name}.docx")
         
-        # PDF Corregido
-        pdf_bytes = crear_pdf(steps_df, client_name)
-        c3.download_button("📕 PDF", data=pdf_bytes, file_name=f"Audit_{client_name}.pdf")
+        # Generación de PDF segura
+        try:
+            pdf_data = crear_pdf(steps_df, client_name)
+            c3.download_button("📕 PDF", data=pdf_data, file_name=f"Audit_{client_name}.pdf", mime="application/pdf")
+        except Exception as e:
+            c3.error("Error al generar PDF")
 
     steps_db = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
     cols_l = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
@@ -195,8 +198,8 @@ def vista_principal():
         st.divider()
         st.subheader("🔗 Consultas Rápidas")
         c1, c2 = st.columns(2)
-        c1.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
-        c2.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
+        with c1: st.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
+        with c2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
 
     if 'active_id' in st.session_state:
         vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
