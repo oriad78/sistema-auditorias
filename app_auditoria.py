@@ -42,7 +42,7 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Sin Iniciar")')
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
-    # Limpieza de estados nulos o inválidos para evitar errores de selección
+    # Limpieza de estados nulos o inválidos
     cursor.execute("UPDATE audit_steps SET status = 'Sin Iniciar' WHERE status NOT IN ('Sin Iniciar', 'En Proceso', 'Terminado') OR status IS NULL")
     
     conn.commit()
@@ -53,7 +53,6 @@ create_tables()
 # --- MÓDULOS DE CONTENIDO ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Determinación de la Materialidad (NIA 320)")
-    
     conn = get_db_connection()
     datos = conn.execute("SELECT * FROM materiality WHERE client_id=?", (client_id,)).fetchone()
     conn.close()
@@ -113,8 +112,12 @@ def modulo_programa_trabajo(client_id):
                 n_nota = st.text_area("Notas y Evidencia", value=row['user_notes'] or "", key=f"nt_{sid}")
             with c_estado:
                 n_est = st.selectbox("Estado", opciones_estado, index=opciones_estado.index(est_db), key=f"es_{sid}")
-                if st.button("Actualizar Paso", key=f"bt_{sid}"):
+                col_btn1, col_btn2 = st.columns(2)
+                if col_btn1.button("Actualizar", key=f"upd_{sid}"):
                     conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
+                    conn.commit(); st.rerun()
+                if col_btn2.button("🗑️ Borrar", key=f"del_step_{sid}"):
+                    conn.execute("DELETE FROM audit_steps WHERE id=?", (sid,))
                     conn.commit(); st.rerun()
             st.divider()
     conn.close()
@@ -150,7 +153,7 @@ def vista_principal():
         st.subheader("Registrar Empresa")
         name = st.text_input("Nombre o Razón Social"); nit = st.text_input("NIT")
         if st.button("Crear Auditoría"):
-            if name and nit: # Validación para no crear clientes vacíos
+            if name and nit:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, name, nit))
                 cid = cur.lastrowid
@@ -178,14 +181,28 @@ def vista_principal():
     if 'active_id' in st.session_state:
         vista_expediente(st.session_state.active_id, st.session_state.active_name)
     else:
+        search = st.text_input("🔍 Buscar cliente por nombre o NIT...")
         conn = get_db_connection()
-        clients = pd.read_sql_query("SELECT * FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
+        query = "SELECT * FROM clients WHERE user_id=?"
+        params = [st.session_state.user_id]
+        if search:
+            query += " AND (client_name LIKE ? OR client_nit LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%"])
+        
+        clients = pd.read_sql_query(query, conn, params=params)
+        
         for _, r in clients.iterrows():
             with st.container(border=True):
-                c1, c2 = st.columns([4, 1])
+                c1, c2, c3 = st.columns([4, 1, 1])
                 c1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
-                if c2.button("Abrir Expediente", key=f"op_{r['id']}"):
+                if c2.button("Abrir", key=f"op_{r['id']}", use_container_width=True):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
+                if c3.button("🗑️", key=f"del_cli_{r['id']}", use_container_width=True):
+                    # Borrado en cascada manual
+                    conn.execute("DELETE FROM clients WHERE id=?", (r['id'],))
+                    conn.execute("DELETE FROM audit_steps WHERE client_id=?", (r['id'],))
+                    conn.execute("DELETE FROM materiality WHERE client_id=?", (r['id'],))
+                    conn.commit(); st.rerun()
         conn.close()
 
 # --- ACCESO Y SEGURIDAD ---
@@ -195,7 +212,6 @@ def vista_login():
     st.title("⚖️ AuditPro")
     e = st.text_input("Correo electrónico")
     p = st.text_input("Contraseña", type="password")
-    
     c1, c2 = st.columns(2)
     
     if c1.button("Ingresar", use_container_width=True):
@@ -206,27 +222,19 @@ def vista_login():
             if u: 
                 st.session_state.user_id, st.session_state.user_name = u[0], u[1]
                 st.rerun()
-            else: 
-                st.error("Correo o contraseña incorrectos")
-        else:
-            st.warning("Por favor ingrese sus credenciales")
+            else: st.error("Correo o contraseña incorrectos")
+        else: st.warning("Ingrese sus credenciales")
 
     if c2.button("Crear Cuenta", use_container_width=True):
-        if e and p: # VALIDACIÓN DE CAMPOS VACÍOS
-            if "@" in e and "." in e: # Validación básica de formato de correo
-                conn = get_db_connection()
-                try:
-                    conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (e, "Auditor Senior", hash_pass(p)))
-                    conn.commit()
-                    st.success("Cuenta creada exitosamente. Ahora puede Ingresar.")
-                except sqlite3.IntegrityError:
-                    st.error("Este correo ya está registrado.")
-                finally:
-                    conn.close()
-            else:
-                st.error("Por favor ingrese un correo electrónico válido.")
-        else:
-            st.error("Debe completar el correo y la contraseña para crear una cuenta.")
+        if e and p and "@" in e:
+            conn = get_db_connection()
+            try:
+                conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (e, "Auditor Senior", hash_pass(p)))
+                conn.commit()
+                st.success("Cuenta creada exitosamente.")
+            except sqlite3.IntegrityError: st.error("El correo ya existe.")
+            finally: conn.close()
+        else: st.error("Ingrese un correo válido y una contraseña.")
 
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
