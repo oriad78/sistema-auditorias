@@ -127,21 +127,12 @@ def vista_expediente(client_id, client_name):
 
     if 'current_module' not in st.session_state: st.session_state.current_module = "Materialidad"
 
-    # NAVEGACIÓN PRINCIPAL
+    # NAVEGACIÓN PRINCIPAL SIN ENLACES EXTERNOS
     st.markdown("---")
     m1, m2, m3 = st.columns(3)
     if m1.button("📊 Materialidad", use_container_width=True): st.session_state.current_module = "Materialidad"
     if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.current_module = "Programa"
     if m3.button("📥 Exportar Datos", use_container_width=True): st.session_state.current_module = "Exportar"
-    
-    # ENLACES EXTERNOS EN EL EXPEDIENTE
-    st.markdown(" **🔍 Herramientas de Consulta Legal:**")
-    col_links = st.columns([1, 1, 4])
-    with col_links[0]:
-        st.link_button("🌐 Estado RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
-    with col_links[1]:
-        st.link_button("🏢 Búsqueda RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
-    
     st.markdown("---")
 
     if st.session_state.current_module == "Materialidad":
@@ -169,10 +160,9 @@ def vista_principal():
                 conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions, status) VALUES (?,?,?,?,?,?)", (cid, sec, cod, desc, ins, "Sin Iniciar"))
             conn.commit(); conn.close(); st.rerun()
 
-    # --- CONTENIDO DEL DASHBOARD ---
+    # --- CONTENIDO DEL DASHBOARD CON ENLACES MANTENIDOS ---
     st.title("💼 Dashboard de Auditoría")
     
-    # ENLACES EXTERNOS EN EL DASHBOARD (PARA CONSULTA RÁPIDA)
     st.markdown(" **🔍 Consultas Rápidas:**")
     col_dash_links = st.columns([1, 1, 4])
     with col_dash_links[0]:
@@ -188,7 +178,7 @@ def vista_principal():
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
         if clients.empty:
-            st.info("No hay auditorías registradas. Utilice el panel lateral para crear una.")
+            st.info("No hay auditorías registradas.")
         for _, r in clients.iterrows():
             with st.container(border=True):
                 c1, c2 = st.columns([4, 1])
