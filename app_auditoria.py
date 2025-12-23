@@ -23,18 +23,12 @@ st.markdown("""
         font-size: 14px;
         color: #0d47a1;
     }
-    .metric-card {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        text-align: center;
-    }
     </style>
 """, unsafe_allow_html=True)
 
 # --- BASE DE DATOS ---
 def get_db_connection():
+    # Aumentamos el timeout para evitar colisiones en escrituras simultáneas
     return sqlite3.connect('audit_management.db', timeout=30, check_same_thread=False)
 
 def create_tables():
@@ -64,12 +58,14 @@ def log_change(step_id, user_id, action, old_val, new_val):
 # --- LÓGICA DE MATERIALIDAD ---
 def seccion_materialidad(client_id):
     st.subheader("📊 Cálculo de Materialidad (NIA 320)")
+    
     with get_db_connection() as conn:
         data = conn.execute("SELECT * FROM materiality WHERE client_id=?", (client_id,)).fetchone()
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        benchmark = st.selectbox("Referencia (Benchmark)", ["Utilidad antes de Impuestos", "Activos Totales", "Ingresos Totales", "Patrimonio"], index=0)
+        benchmark = st.selectbox("Referencia (Benchmark)", ["Utilidad antes de Impuestos", "Activos Totales", "Ingresos Totales", "Patrimonio"], 
+                                 index=0 if not data else ["Utilidad antes de Impuestos", "Activos Totales", "Ingresos Totales", "Patrimonio"].index(data[2]))
     with col2:
         valor = st.number_input("Valor de la Referencia ($)", value=float(data[3]) if data else 0.0, format="%.2f")
     with col3:
@@ -95,6 +91,7 @@ def vista_papeles_trabajo(client_id, client_name):
     tab1, tab2, tab3 = st.tabs(["📝 Ejecución", "⚖️ Materialidad", "📜 Historial (NIA 230)"])
 
     with tab1:
+        # Abrimos conexión específica para la consulta de pasos
         with get_db_connection() as conn:
             steps_db = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
         
@@ -111,23 +108,26 @@ def vista_papeles_trabajo(client_id, client_name):
                         notas = st.text_area("Hallazgos / Notas", value=row['user_notes'] or "", key=f"n_{sid}")
                         if st.button("Guardar", key=f"s_{sid}"):
                             log_change(sid, st.session_state.user_id, "Nota", row['user_notes'], notas)
-                            with get_db_connection() as conn:
-                                conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid)); conn.commit()
+                            with get_db_connection() as conn_upd:
+                                conn_upd.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid))
+                                conn_upd.commit()
                             st.toast("Guardado")
 
                     with c_est:
                         nuevo = st.selectbox("Estado", ["Pendiente", "En Proceso", "Cerrado"], index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), key=f"e_{sid}")
                         if nuevo != row['status']:
                             log_change(sid, st.session_state.user_id, "Estado", row['status'], nuevo)
-                            with get_db_connection() as conn:
-                                conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo, sid)); conn.commit()
+                            with get_db_connection() as conn_upd:
+                                conn_upd.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo, sid))
+                                conn_upd.commit()
                             st.rerun()
                     
                     with c_file:
                         up = st.file_uploader("Adjuntar", key=f"up_{sid}")
                         if up:
-                            with get_db_connection() as conn:
-                                conn.execute("INSERT INTO step_files (step_id, file_name, file_data) VALUES (?,?,?)", (sid, up.name, up.read())); conn.commit()
+                            with get_db_connection() as conn_upd:
+                                conn_upd.execute("INSERT INTO step_files (step_id, file_name, file_data) VALUES (?,?,?)", (sid, up.name, up.read()))
+                                conn_upd.commit()
                             st.rerun()
 
     with tab2:
@@ -135,11 +135,18 @@ def vista_papeles_trabajo(client_id, client_name):
 
     with tab3:
         st.subheader("Trazabilidad de la Auditoría")
-        with get_db_connection() as conn:
-            logs = pd.read_sql_query("""SELECT timestamp, action, old_value, new_value FROM audit_logs 
-                                      WHERE step_id IN (SELECT id FROM audit_steps WHERE client_id=?) 
-                                      ORDER BY timestamp DESC""", conn, params=(client_id,))
-        st.table(logs)
+        # Corrección: Abrimos una conexión limpia para el reporte de logs de Pandas
+        with get_db_connection() as conn_logs:
+            query = """SELECT timestamp, action, old_value, new_value 
+                       FROM audit_logs 
+                       WHERE step_id IN (SELECT id FROM audit_steps WHERE client_id=?) 
+                       ORDER BY timestamp DESC"""
+            logs_df = pd.read_sql_query(query, conn_logs, params=(client_id,))
+        
+        if not logs_df.empty:
+            st.dataframe(logs_df, use_container_width=True)
+        else:
+            st.info("No hay registros de cambios para este cliente aún.")
 
 # --- VISTA PRINCIPAL ---
 def vista_principal():
@@ -157,7 +164,12 @@ def vista_principal():
                 cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, tipo_trabajo) VALUES (?,?,?)", (st.session_state.user_id, cn, tipo))
                 cid = cur.lastrowid
-                for sec, cod, desc, ins in [("100 - Inicio", "1000", "Aceptación", "Validar NIA 210"), ("200 - Riesgos", "2000", "Materialidad", "Calcular NIA 320")]:
+                plantilla = [
+                    ("100 - Inicio", "1000", "Aceptación", "Validar integridad y NIA 210"),
+                    ("200 - Riesgos", "2000", "Materialidad", "Calcular umbrales NIA 320"),
+                    ("300 - Ejecución", "3000", "Pruebas Sustantivas", "Documentar hallazgos")
+                ]
+                for sec, cod, desc, ins in plantilla:
                     conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)", (cid, sec, cod, desc, ins))
                 conn.commit()
             st.rerun()
@@ -180,11 +192,13 @@ def vista_principal():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 4, 1])
                 c1.write(f"### {r['client_name']}")
-                c1.write(f"Tipo: {r['tipo_trabajo']}")
-                c2.write(f"Avance: {progreso*100:.0f}%")
+                c1.write(f"_{r['tipo_trabajo']}_")
+                c2.write(f"**Avance: {progreso*100:.0f}%**")
                 c2.progress(progreso)
                 if c3.button("Abrir", key=f"btn_{r['id']}"):
-                    st.session_state.active_id = r['id']; st.session_state.active_name = r['client_name']; st.rerun()
+                    st.session_state.active_id = r['id']
+                    st.session_state.active_name = r['client_name']
+                    st.rerun()
 
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 
@@ -197,15 +211,21 @@ def vista_login():
             if st.form_submit_button("Entrar"):
                 with get_db_connection() as conn:
                     u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
-                if u: st.session_state.user_id, st.session_state.user_name = u[0], u[1]; st.rerun()
-                else: st.error("Error")
+                if u: 
+                    st.session_state.user_id, st.session_state.user_name = u[0], u[1]
+                    st.rerun()
+                else: st.error("Usuario o clave incorrectos")
     with t2:
         with st.form("r"):
             n, e, p = st.text_input("Nombre"), st.text_input("Correo"), st.text_input("Clave", type="password")
             if st.form_submit_button("Registrar"):
-                with get_db_connection() as conn:
-                    conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (e, n, hash_pass(p))); conn.commit()
-                st.success("Listo")
+                try:
+                    with get_db_connection() as conn:
+                        conn.execute("INSERT INTO users (email, full_name, password_hash) VALUES (?,?,?)", (e, n, hash_pass(p)))
+                        conn.commit()
+                    st.success("Usuario registrado exitosamente.")
+                except:
+                    st.error("El correo ya existe.")
 
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
