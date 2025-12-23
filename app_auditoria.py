@@ -60,13 +60,35 @@ def create_tables():
     conn.commit()
     conn.close()
 
-# Función para registrar cambios (Trazabilidad)
+# --- Función para registrar cambios (Corregida y Blindada) ---
 def log_change(step_id, user_id, action, old_val, new_val):
     conn = get_db_connection()
-    conn.execute("INSERT INTO audit_logs (step_id, user_id, action, old_value, new_value) VALUES (?,?,?,?,?)",
-                 (step_id, user_id, action, str(old_val), str(new_val)))
-    conn.commit()
-    conn.close()
+    try:
+        # Intentamos insertar el log
+        conn.execute("INSERT INTO audit_logs (step_id, user_id, action, old_value, new_value) VALUES (?,?,?,?,?)",
+                     (step_id, user_id, action, str(old_val), str(new_val)))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        # Si falla porque la tabla no existe, la creamos al vuelo y reintentamos
+        if "no such table" in str(e):
+            conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs 
+                            (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                            step_id INTEGER, 
+                            user_id INTEGER, 
+                            action TEXT, 
+                            old_value TEXT, 
+                            new_value TEXT, 
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+            conn.commit()
+            # Reintentamos la inserción ahora que la tabla existe
+            conn.execute("INSERT INTO audit_logs (step_id, user_id, action, old_value, new_value) VALUES (?,?,?,?,?)",
+                         (step_id, user_id, action, str(old_val), str(new_val)))
+            conn.commit()
+        else:
+            # Si es otro error (ej: base de datos bloqueada), lo dejamos pasar para verlo
+            raise e
+    finally:
+        conn.close()
 
 create_tables()
 
@@ -208,3 +230,4 @@ def vista_login():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
