@@ -40,10 +40,12 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Sin Iniciar", is_deleted INTEGER DEFAULT 0)')
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
-    # Asegurar que las columnas de borrado lógico existan
+    # Asegurar que las columnas de borrado lógico existan (Migración)
     try: cursor.execute('ALTER TABLE clients ADD COLUMN is_deleted INTEGER DEFAULT 0')
     except: pass
     try: cursor.execute('ALTER TABLE audit_steps ADD COLUMN is_deleted INTEGER DEFAULT 0')
+    except: pass
+    try: cursor.execute('ALTER TABLE users ADD COLUMN role TEXT DEFAULT "Miembro"')
     except: pass
     
     conn.commit()
@@ -94,7 +96,7 @@ def modulo_papelera():
 
     if not deleted_clients.empty or not deleted_steps.empty:
         st.divider()
-        if st.button("⚠️ VACIAL TODA LA PAPELERA", use_container_width=True, type="primary"):
+        if st.button("⚠️ VACIAR TODA LA PAPELERA", use_container_width=True, type="primary"):
             conn.execute("DELETE FROM audit_steps WHERE is_deleted=1")
             conn.execute("DELETE FROM clients WHERE is_deleted=1")
             conn.commit(); st.rerun()
@@ -103,6 +105,7 @@ def modulo_papelera():
 # --- MÓDULOS DE AUDITORÍA ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad (NIA 320)")
+    
     conn = get_db_connection()
     datos = conn.execute("SELECT * FROM materiality WHERE client_id=?", (client_id,)).fetchone()
     conn.close()
@@ -151,7 +154,8 @@ def modulo_programa_trabajo(client_id):
 # --- VISTAS PRINCIPALES ---
 def vista_expediente(client_id, client_name):
     if st.button("⬅️ Volver al Dashboard"):
-        del st.session_state.active_id; st.rerun()
+        if 'active_id' in st.session_state: del st.session_state.active_id
+        st.rerun()
     st.title(f"📂 {client_name}")
     m1, m2 = st.columns(2)
     if m1.button("📊 Materialidad", use_container_width=True): st.session_state.current_module = "Materialidad"
@@ -160,9 +164,12 @@ def vista_expediente(client_id, client_name):
     else: modulo_materialidad(client_id)
 
 def vista_principal():
-    is_admin = st.session_state.get('user_role') == "Admin"
+    # SOLUCIÓN AL ERROR: Verificar si existe el rol en la sesión
+    user_role = st.session_state.get('user_role', "Miembro")
+    is_admin = user_role == "Admin"
+    
     with st.sidebar:
-        st.write(f"Usuario: **{st.session_state.user_name}** ({st.session_state.user_role})")
+        st.write(f"Usuario: **{st.session_state.user_name}** ({user_role})")
         if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
         if is_admin:
@@ -209,10 +216,16 @@ def vista_login():
     e, p = st.text_input("Correo"), st.text_input("Pass", type="password")
     c1, c2 = st.columns(2)
     if c1.button("Ingresar", use_container_width=True):
-        conn = get_db_connection()
-        u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
-        conn.close()
-        if u: st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]; st.rerun()
+        if e and p:
+            conn = get_db_connection()
+            u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
+            conn.close()
+            if u: 
+                st.session_state.user_id = u[0]
+                st.session_state.user_name = u[1]
+                st.session_state.user_role = u[2] if u[2] else "Miembro" # Asegurar que el rol se guarde
+                st.rerun()
+            else: st.error("Credenciales incorrectas")
     if c2.button("Registrar", use_container_width=True):
         if e and p:
             conn = get_db_connection()
@@ -220,8 +233,8 @@ def vista_login():
             role = "Admin" if count == 0 else "Miembro"
             try:
                 conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (e, "Auditor Senior", hash_pass(p), role))
-                conn.commit(); st.success(f"Creado como {role}")
-            except: st.error("Error")
+                conn.commit(); st.success(f"Creado como {role}. Ya puede ingresar.")
+            except: st.error("El usuario ya existe.")
             finally: conn.close()
 
 if __name__ == "__main__":
