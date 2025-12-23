@@ -178,4 +178,64 @@ def vista_principal():
         st.subheader("➕ Nuevo Encargo")
         cn = st.text_input("Empresa")
         ct = st.text_input("NIT")
-        tipo = st.selectbox
+        tipo = st.selectbox("Tipo", ["Revisoría Fiscal", "Auditoría Externa", "Otros"])
+        if st.button("Crear"):
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO clients (user_id, client_name, client_nit, tipo_trabajo) VALUES (?,?,?,?)", 
+                        (st.session_state.user_id, cn, ct, tipo))
+            cid = cur.lastrowid
+            for sec, cod, desc, ins in TEMPLATE_AUDITORIA:
+                conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)", 
+                            (cid, sec, cod, desc, ins))
+            conn.commit()
+            conn.close()
+            st.rerun()
+        st.divider()
+        st.subheader("🔗 Consultas Rápidas")
+        c1, c2 = st.columns(2)
+        with c1: st.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
+        with c2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
+
+    if 'active_id' in st.session_state:
+        vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
+    else:
+        st.title("💼 Gestión de Auditoría")
+        conn = get_db_connection()
+        df = pd.read_sql_query("SELECT id, client_name, client_nit, tipo_trabajo, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
+        cols_l = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
+        
+        for _, r in df.iterrows():
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
+                c1.write(f"{cols_l.get(r['estado'], '⚪')} **{r['client_name']}**")
+                c2.write(f"_{r['tipo_trabajo']}_")
+                c3.write(f"{r['estado']}")
+                if c4.button("Abrir", key=f"b_{r['id']}"):
+                    st.session_state.active_id = r['id']
+                    st.session_state.active_name = r['client_name']
+                    st.rerun()
+        conn.close()
+
+def hash_pass(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def vista_login():
+    st.title("⚖️ AuditPro")
+    t1, t2 = st.tabs(["Ingreso", "Registro"])
+    with t1:
+        with st.form("login"):
+            e, p = st.text_input("Correo"), st.text_input("Contraseña", type="password")
+            if st.form_submit_button("Entrar"):
+                conn = get_db_connection()
+                u = conn.execute("SELECT id, full_name FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
+                conn.close()
+                if u: 
+                    st.session_state.user_id = u[0]
+                    st.session_state.user_name = u[1]
+                    st.rerun()
+                else: st.error("Acceso incorrecto")
+
+if __name__ == "__main__":
+    if 'user_id' not in st.session_state: vista_login()
+    else: vista_principal()
