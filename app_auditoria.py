@@ -40,7 +40,7 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Sin Iniciar", is_deleted INTEGER DEFAULT 0)')
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
-    # Asegurar que las columnas de borrado lógico existan (Migración)
+    # Migraciones de seguridad
     try: cursor.execute('ALTER TABLE clients ADD COLUMN is_deleted INTEGER DEFAULT 0')
     except: pass
     try: cursor.execute('ALTER TABLE audit_steps ADD COLUMN is_deleted INTEGER DEFAULT 0')
@@ -105,7 +105,6 @@ def modulo_papelera():
 # --- MÓDULOS DE AUDITORÍA ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad (NIA 320)")
-    
     conn = get_db_connection()
     datos = conn.execute("SELECT * FROM materiality WHERE client_id=?", (client_id,)).fetchone()
     conn.close()
@@ -164,7 +163,6 @@ def vista_expediente(client_id, client_name):
     else: modulo_materialidad(client_id)
 
 def vista_principal():
-    # SOLUCIÓN AL ERROR: Verificar si existe el rol en la sesión
     user_role = st.session_state.get('user_role', "Miembro")
     is_admin = user_role == "Admin"
     
@@ -189,8 +187,15 @@ def vista_principal():
         vista_expediente(st.session_state.active_id, st.session_state.active_name)
     else:
         st.title("💼 Dashboard AuditPro")
+        
+        # --- BLOQUE DE ENLACES REINTEGRADO ---
+        st.markdown("**🔍 Consultas Externas:**")
+        col_dash_links = st.columns(2)
+        col_dash_links[0].link_button("🌐 Estado RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+        col_dash_links[1].link_button("🏢 Búsqueda RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+        
         st.divider()
-        search = st.text_input("🔍 Buscar cliente...")
+        search = st.text_input("🔍 Buscar cliente por Nombre o NIT...")
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0 AND (client_name LIKE ? OR client_nit LIKE ?)", conn, params=(f"%{search}%", f"%{search}%"))
         for _, r in clients.iterrows():
@@ -213,7 +218,7 @@ def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 
 def vista_login():
     st.title("⚖️ Acceso AuditPro")
-    e, p = st.text_input("Correo"), st.text_input("Pass", type="password")
+    e, p = st.text_input("Correo electrónico"), st.text_input("Contraseña", type="password")
     c1, c2 = st.columns(2)
     if c1.button("Ingresar", use_container_width=True):
         if e and p:
@@ -223,7 +228,7 @@ def vista_login():
             if u: 
                 st.session_state.user_id = u[0]
                 st.session_state.user_name = u[1]
-                st.session_state.user_role = u[2] if u[2] else "Miembro" # Asegurar que el rol se guarde
+                st.session_state.user_role = u[2] if u[2] else "Miembro"
                 st.rerun()
             else: st.error("Credenciales incorrectas")
     if c2.button("Registrar", use_container_width=True):
