@@ -134,7 +134,7 @@ def vista_expediente(client_id, client_name):
     if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.current_module = "Programa"
     if m3.button("📥 Exportar Datos", use_container_width=True): st.session_state.current_module = "Exportar"
     
-    # ENLACES EXTERNOS ACTUALIZADOS
+    # ENLACES EXTERNOS EN EL EXPEDIENTE
     st.markdown(" **🔍 Herramientas de Consulta Legal:**")
     col_links = st.columns([1, 1, 4])
     with col_links[0]:
@@ -144,13 +144,10 @@ def vista_expediente(client_id, client_name):
     
     st.markdown("---")
 
-    # CARGA DE MÓDULO SELECCIONADO
     if st.session_state.current_module == "Materialidad":
         modulo_materialidad(client_id)
     elif st.session_state.current_module == "Programa":
         modulo_programa_trabajo(client_id)
-    else:
-        st.info("Función de exportación próximamente disponible.")
 
 # --- VISTA PRINCIPAL (DASHBOARD) ---
 def vista_principal():
@@ -164,20 +161,30 @@ def vista_principal():
             conn = get_db_connection(); cur = conn.cursor()
             cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, name, nit))
             cid = cur.lastrowid
-            # Plantilla inicial técnica
             pasos = [
                 ("100 Planeación", "101", "Aceptación del Cliente", "Validar antecedentes y vinculación económica."),
-                ("100 Planeación", "102", "Conocimiento del Negocio", "Identificar actividades principales y marco contable."),
                 ("200 Ejecución", "201", "Arqueos", "Realizar verificación de cajas y fondos fijos."),
             ]
             for sec, cod, desc, ins in pasos:
                 conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions, status) VALUES (?,?,?,?,?,?)", (cid, sec, cod, desc, ins, "Sin Iniciar"))
             conn.commit(); conn.close(); st.rerun()
 
+    # --- CONTENIDO DEL DASHBOARD ---
+    st.title("💼 Dashboard de Auditoría")
+    
+    # ENLACES EXTERNOS EN EL DASHBOARD (PARA CONSULTA RÁPIDA)
+    st.markdown(" **🔍 Consultas Rápidas:**")
+    col_dash_links = st.columns([1, 1, 4])
+    with col_dash_links[0]:
+        st.link_button("🌐 Estado RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+    with col_dash_links[1]:
+        st.link_button("🏢 Búsqueda RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+    
+    st.divider()
+
     if 'active_id' in st.session_state:
         vista_expediente(st.session_state.active_id, st.session_state.active_name)
     else:
-        st.title("💼 Dashboard de Auditoría")
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
         if clients.empty:
