@@ -58,9 +58,10 @@ def modulo_papelera():
     st.subheader("♻️ Papelera de Reciclaje")
     conn = get_db_connection()
     
+    # 1. Auditorías Borradas
     deleted_clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=1", conn)
     if not deleted_clients.empty:
-        st.write("**Auditorías en espera de eliminación:**")
+        st.write("**Empresas en la papelera:**")
         for _, r in deleted_clients.iterrows():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 1, 1.5])
@@ -74,9 +75,10 @@ def modulo_papelera():
                     conn.execute("DELETE FROM materiality WHERE client_id=?", (r['id'],))
                     conn.commit(); st.rerun()
 
+    # 2. Pasos Borrados
     deleted_steps = pd.read_sql_query("SELECT s.*, c.client_name FROM audit_steps s JOIN clients c ON s.client_id = c.id WHERE s.is_deleted=1", conn)
     if not deleted_steps.empty:
-        st.write("**Pasos individuales eliminados:**")
+        st.write("**Pasos en la papelera:**")
         for _, s in deleted_steps.iterrows():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 1, 1.5])
@@ -89,18 +91,18 @@ def modulo_papelera():
                     conn.commit(); st.rerun()
 
     if not deleted_clients.empty or not deleted_steps.empty:
+        st.divider()
         if st.button("⚠️ VACIAR TODA LA PAPELERA", use_container_width=True, type="primary"):
             conn.execute("DELETE FROM audit_steps WHERE is_deleted=1")
             conn.execute("DELETE FROM clients WHERE is_deleted=1")
             conn.commit(); st.rerun()
     else:
-        st.caption("La papelera está vacía.")
+        st.caption("No hay elementos para recuperar o eliminar permanentemente.")
     conn.close()
 
 # --- MÓDULOS DE AUDITORÍA ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad (NIA 320)")
-    
     conn = get_db_connection()
     datos = conn.execute("SELECT * FROM materiality WHERE client_id=?", (client_id,)).fetchone()
     conn.close()
@@ -135,18 +137,21 @@ def modulo_programa_trabajo(client_id):
         pasos_seccion = steps[steps['section_name'] == seccion]
         for _, row in pasos_seccion.iterrows():
             sid = row['id']
-            # CORRECCIÓN DE ERROR: Validar índice de estado
             estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
             idx_estado = opciones_estado.index(estado_actual)
             
             with st.expander(f"{row['step_code']} - {row['description']}"):
                 n_nota = st.text_area("Evidencia", value=row['user_notes'] or "", key=f"nt_{sid}")
                 n_est = st.selectbox("Estado", opciones_estado, index=idx_estado, key=f"es_{sid}")
-                if st.button("Actualizar", key=f"upd_{sid}"):
+                col_upd, col_del = st.columns([1, 1])
+                if col_upd.button("Actualizar", key=f"upd_{sid}", use_container_width=True):
                     conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
                     conn.commit(); st.rerun()
-                with st.popover("🗑️ Borrar"):
-                    if st.button("Mover a papelera", key=f"del_{sid}"):
+                
+                # ALERTA BORRAR PASO
+                with col_del.popover("🗑️ Borrar Paso", use_container_width=True):
+                    st.error("¿Mover este paso a la papelera?")
+                    if st.button("Confirmar Borrado", key=f"del_step_btn_{sid}", type="primary"):
                         conn.execute("UPDATE audit_steps SET is_deleted=1 WHERE id=?", (sid,))
                         conn.commit(); st.rerun()
     conn.close()
@@ -161,10 +166,8 @@ def vista_expediente(client_id, client_name):
     if m1.button("📊 Materialidad", use_container_width=True): st.session_state.current_module = "Materialidad"
     if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.current_module = "Programa"
     
-    if st.session_state.get('current_module') == "Programa": 
-        modulo_programa_trabajo(client_id)
-    else: 
-        modulo_materialidad(client_id)
+    if st.session_state.get('current_module') == "Programa": modulo_programa_trabajo(client_id)
+    else: modulo_materialidad(client_id)
 
 def vista_principal():
     user_role = st.session_state.get('user_role', "Miembro")
@@ -179,7 +182,7 @@ def vista_principal():
             st.divider()
         st.subheader("Nueva Empresa")
         name = st.text_input("Nombre"); nit = st.text_input("NIT")
-        if st.button("Registrar"):
+        if st.button("Registrar Auditoría"):
             if name and nit:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, name, nit))
@@ -199,19 +202,28 @@ def vista_principal():
         search = st.text_input("🔍 Buscar cliente...")
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0 AND (client_name LIKE ? OR client_nit LIKE ?)", conn, params=(f"%{search}%", f"%{search}%"))
+        
         for _, r in clients.iterrows():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([4, 1, 1])
                 c1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
                 if c2.button("Abrir", key=f"op_{r['id']}", use_container_width=True):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
+                
+                # RESTRICCIÓN Y ALERTA DE BORRADO DE EMPRESA
                 with c3:
                     if is_admin:
-                        with st.popover("🗑️"):
-                            if st.button("Mover a papelera", key=f"soft_del_{r['id']}"):
+                        # La alerta se muestra dentro del popover
+                        with st.popover("🗑️", use_container_width=True):
+                            st.error("⚠️ ¿Eliminar Auditoría?")
+                            st.caption("Se moverá a la papelera. Podrás restaurarla después.")
+                            if st.button("Confirmar Borrado", key=f"soft_del_cli_{r['id']}", type="primary", use_container_width=True):
                                 conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
-                                conn.commit(); st.rerun()
-                    else: st.write("🔒")
+                                conn.commit()
+                                st.toast(f"Empresa {r['client_name']} movida a la papelera")
+                                st.rerun()
+                    else:
+                        st.button("🔒", key=f"lock_{r['id']}", help="Solo el Administrador puede eliminar empresas", use_container_width=True)
         conn.close()
 
 # --- LOGIN ---
@@ -229,7 +241,7 @@ def vista_login():
             if u: 
                 st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
                 st.rerun()
-            else: st.error("Error")
+            else: st.error("Credenciales incorrectas")
     if c2.button("Registrar", use_container_width=True):
         if e and p:
             conn = get_db_connection()
@@ -237,8 +249,8 @@ def vista_login():
             role = "Admin" if count == 0 else "Miembro"
             try:
                 conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (e, "Auditor Senior", hash_pass(p), role))
-                conn.commit(); st.success(f"Creado como {role}")
-            except: st.error("Error")
+                conn.commit(); st.success(f"Usuario {role} creado. Ya puedes ingresar.")
+            except: st.error("El usuario ya existe")
             finally: conn.close()
 
 if __name__ == "__main__":
