@@ -42,8 +42,8 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Sin Iniciar")')
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
-    # Asegurar que pasos antiguos tengan estado
-    cursor.execute("UPDATE audit_steps SET status = 'Sin Iniciar' WHERE status IS NULL OR status = ''")
+    # Limpieza de estados nulos o inválidos para evitar el ValueError
+    cursor.execute("UPDATE audit_steps SET status = 'Sin Iniciar' WHERE status NOT IN ('Sin Iniciar', 'En Proceso', 'Terminado') OR status IS NULL")
     
     conn.commit()
     conn.close()
@@ -90,6 +90,7 @@ def modulo_programa_trabajo(client_id):
     conn = get_db_connection()
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? ORDER BY section_name, step_code", conn, params=(client_id,))
     
+    opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
     iconos = {"Sin Iniciar": "🔴", "En Proceso": "🟡", "Terminado": "🟢"}
     colores = {"Sin Iniciar": "#d32f2f", "En Proceso": "#fbc02d", "Terminado": "#388e3c"}
 
@@ -97,11 +98,16 @@ def modulo_programa_trabajo(client_id):
         st.subheader(f"📁 {seccion}")
         pasos_seccion = steps[steps['section_name'] == seccion]
         for _, row in pasos_seccion.iterrows():
-            sid, est = row['id'], (row['status'] or "Sin Iniciar")
-            color = colores.get(est, "#d32f2f")
+            sid = row['id']
+            # Validación robusta del estado para evitar ValueError
+            est_db = row['status']
+            if est_db not in opciones_estado:
+                est_db = "Sin Iniciar"
+            
+            color = colores.get(est_db, "#d32f2f")
             
             st.markdown(f"""<div style="border-left: 10px solid {color}; background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 5px;">
-                {iconos.get(est)} {row['step_code']} - {row['description']}</div>""", unsafe_allow_html=True)
+                {iconos.get(est_db)} {row['step_code']} - {row['description']}</div>""", unsafe_allow_html=True)
             
             if row['instructions']:
                 st.markdown(f"<div class='instruction-box'><b>💡 Guía del Auditor:</b> {row['instructions']}</div>", unsafe_allow_html=True)
@@ -110,7 +116,9 @@ def modulo_programa_trabajo(client_id):
             with c_nota:
                 n_nota = st.text_area("Notas y Evidencia", value=row['user_notes'] or "", key=f"nt_{sid}")
             with c_estado:
-                n_est = st.selectbox("Estado", ["Sin Iniciar", "En Proceso", "Terminado"], index=["Sin Iniciar", "En Proceso", "Terminado"].index(est), key=f"es_{sid}")
+                n_est = st.selectbox("Estado", opciones_estado, 
+                                     index=opciones_estado.index(est_db), 
+                                     key=f"es_{sid}")
                 if st.button("Actualizar Paso", key=f"bt_{sid}"):
                     conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
                     conn.commit(); st.rerun()
@@ -127,7 +135,6 @@ def vista_expediente(client_id, client_name):
 
     if 'current_module' not in st.session_state: st.session_state.current_module = "Materialidad"
 
-    # NAVEGACIÓN PRINCIPAL SIN ENLACES EXTERNOS
     st.markdown("---")
     m1, m2, m3 = st.columns(3)
     if m1.button("📊 Materialidad", use_container_width=True): st.session_state.current_module = "Materialidad"
@@ -160,7 +167,6 @@ def vista_principal():
                 conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions, status) VALUES (?,?,?,?,?,?)", (cid, sec, cod, desc, ins, "Sin Iniciar"))
             conn.commit(); conn.close(); st.rerun()
 
-    # --- CONTENIDO DEL DASHBOARD CON ENLACES MANTENIDOS ---
     st.title("💼 Dashboard de Auditoría")
     
     st.markdown(" **🔍 Consultas Rápidas:**")
@@ -177,8 +183,6 @@ def vista_principal():
     else:
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
-        if clients.empty:
-            st.info("No hay auditorías registradas.")
         for _, r in clients.iterrows():
             with st.container(border=True):
                 c1, c2 = st.columns([4, 1])
