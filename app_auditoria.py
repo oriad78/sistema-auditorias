@@ -39,6 +39,16 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Pendiente")')
     cursor.execute('CREATE TABLE IF NOT EXISTS step_files (id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER, file_name TEXT, file_data BLOB)')
     
+    # Tabla para Logs de Auditoría (Cumplimiento NIA 230)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS audit_logs 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                      step_id INTEGER, 
+                      user_id INTEGER, 
+                      action TEXT, 
+                      old_value TEXT, 
+                      new_value TEXT, 
+                      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
     try:
         cursor.execute('SELECT tipo_trabajo FROM clients LIMIT 1')
     except sqlite3.OperationalError:
@@ -50,34 +60,23 @@ def create_tables():
     conn.commit()
     conn.close()
 
+# Función para registrar cambios (Trazabilidad)
+def log_change(step_id, user_id, action, old_val, new_val):
+    conn = get_db_connection()
+    conn.execute("INSERT INTO audit_logs (step_id, user_id, action, old_value, new_value) VALUES (?,?,?,?,?)",
+                 (step_id, user_id, action, str(old_val), str(new_val)))
+    conn.commit()
+    conn.close()
+
 create_tables()
 
-# --- PLANTILLA MAESTRA (Con Guías) ---
+# --- PLANTILLA MAESTRA ---
 TEMPLATE_AUDITORIA = [
     ("100 - Aceptación y continuación", "1000", "(ISA 220, 300) Evaluar la aceptación del cliente", "Revise la integridad de la gerencia, antecedentes penales y reputación en el mercado. Documente si existe algún conflicto de intereses."),
     ("100 - Aceptación y continuación", "2000", "(ISA 220) Designar un QRP (Quality Review Partner)", "Evaluar si la complejidad del encargo requiere un socio de revisión de calidad independiente para asegurar el cumplimiento normativo."),
     ("1100 - Administración", "1000", "(ISA 315) Entendimiento del cliente y su ambiente", "Realice un análisis del sector, marco regulatorio y naturaleza de la entidad. Incluya el sistema de información y control interno."),
     ("1100 - Administración", "5000", "(ISA 210) Carta de compromiso", "Asegúrese de que la carta de encargo esté firmada por el representante legal y cubra el alcance de la auditoría 2024-2025.")
 ]
-
-# --- FUNCIONES DE EXPORTACIÓN ---
-def crear_pdf(df, client_name):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.set_text_color(211, 47, 47)
-    pdf.cell(190, 10, "AUDITPRO - REPORTE DE EJECUCIÓN", ln=True, align='C')
-    pdf.set_font("Arial", 'I', 12)
-    pdf.cell(190, 10, f"Cliente: {client_name}", ln=True, align='C')
-    pdf.line(10, 32, 200, 32)
-    for _, row in df.iterrows():
-        pdf.ln(5)
-        pdf.set_font("Arial", 'B', 10)
-        pdf.multi_cell(190, 7, f"PASO {row['step_code']}: {row['description']}")
-        pdf.set_font("Arial", size=9)
-        pdf.cell(190, 7, f"ESTADO: {row['status']}", ln=True)
-        pdf.multi_cell(190, 7, f"NOTAS: {row['user_notes'] or 'N/A'}")
-    return bytes(pdf.output())
 
 # --- VISTA PAPELES DE TRABAJO ---
 def vista_papeles_trabajo(client_id, client_name):
@@ -99,21 +98,17 @@ def vista_papeles_trabajo(client_id, client_name):
                 sid = row['id']
                 st.markdown(f"<div class='step-header'>{cols_l.get(row['status'], '⚪')} {row['step_code']} - {row['description']}</div>", unsafe_allow_html=True)
                 
-                # BLOQUE DE INSTRUCCIÓN / GUÍA
                 if row['instructions']:
-                    st.markdown(f"""
-                        <div class='instruction-box'>
-                            <strong>💡 Guía de Auditoría:</strong><br>{row['instructions']}
-                        </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"<div class='instruction-box'><strong>💡 Guía:</strong><br>{row['instructions']}</div>", unsafe_allow_html=True)
                 
                 c_det, c_est, c_file = st.columns([3, 1, 1.5])
                 with c_det:
-                    notas = st.text_area("Desarrollo de la Auditoría", value=row['user_notes'] or "", key=f"n_{sid}", height=150)
+                    notas = st.text_area("Desarrollo", value=row['user_notes'] or "", key=f"n_{sid}", height=150)
                     if st.button("💾 Guardar Notas", key=f"s_{sid}"):
+                        log_change(sid, st.session_state.user_id, "Cambio de Notas", row['user_notes'], notas)
                         conn.execute("UPDATE audit_steps SET user_notes=? WHERE id=?", (notas, sid))
                         conn.commit()
-                        st.toast("Notas guardadas")
+                        st.toast("Notas y log guardados")
 
                 with c_est:
                     st.write(f"Estado: {cols_l.get(row['status'])}")
@@ -121,6 +116,7 @@ def vista_papeles_trabajo(client_id, client_name):
                                          index=["Pendiente", "En Proceso", "Cerrado"].index(row['status']), 
                                          key=f"e_{sid}")
                     if nuevo != row['status']:
+                        log_change(sid, st.session_state.user_id, "Cambio de Estado", row['status'], nuevo)
                         conn.execute("UPDATE audit_steps SET status=? WHERE id=?", (nuevo, sid))
                         conn.commit()
                         st.rerun()
@@ -135,7 +131,7 @@ def vista_papeles_trabajo(client_id, client_name):
                             conn.commit()
                             st.session_state[last_up_key] = up.name
                             st.rerun()
-
+                    
                     archivos = conn.execute("SELECT id, file_name, file_data FROM step_files WHERE step_id=?", (sid,)).fetchall()
                     for fid, fname, fdata in archivos:
                         col_n, col_d, col_dl = st.columns([3, 1, 1])
@@ -147,7 +143,7 @@ def vista_papeles_trabajo(client_id, client_name):
                         col_dl.download_button("📥", data=fdata, file_name=fname, key=f"dl_{fid}")
     conn.close()
 
-# --- VISTA PRINCIPAL ---
+# --- VISTA PRINCIPAL & LOGIN (Resto del código permanece igual) ---
 def vista_principal():
     with st.sidebar:
         st.write(f"Auditor: **{st.session_state.user_name}**")
@@ -171,11 +167,6 @@ def vista_principal():
             conn.commit()
             conn.close()
             st.rerun()
-        st.divider()
-        st.subheader("🔗 Consultas Rápidas")
-        c1, c2 = st.columns(2)
-        with c1: st.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)")
-        with c2: st.markdown("[🔍 DIAN](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces)")
 
     if 'active_id' in st.session_state:
         vista_papeles_trabajo(st.session_state.active_id, st.session_state.active_name)
@@ -183,12 +174,10 @@ def vista_principal():
         st.title("💼 Gestión de Auditoría")
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT id, client_name, client_nit, tipo_trabajo, estado FROM clients WHERE user_id=?", conn, params=(st.session_state.user_id,))
-        cols_l = {"Pendiente": "🔴", "En Proceso": "🟡", "Cerrado": "🟢"}
-        
         for _, r in df.iterrows():
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
-                c1.write(f"{cols_l.get(r['estado'], '⚪')} **{r['client_name']}**")
+                c1.write(f"**{r['client_name']}**")
                 c2.write(f"_{r['tipo_trabajo']}_")
                 c3.write(f"{r['estado']}")
                 if c4.button("Abrir", key=f"b_{r['id']}"):
