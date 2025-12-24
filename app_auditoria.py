@@ -2,6 +2,7 @@ import hashlib
 import sqlite3
 import pandas as pd
 import streamlit as st
+import io
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AuditPro - Sistema Integral", layout="wide")
@@ -188,6 +189,76 @@ def modulo_programa_trabajo(client_id):
     
     conn.close()
 
+# --- NUEVO MÓDULO: IMPORTACIÓN DE EXCEL/CSV ---
+def modulo_importacion(client_id):
+    st.markdown("### 📥 Importar Procedimientos (Excel/CSV)")
+    st.markdown("""
+        Cargue sus programas de auditoría estandarizados. 
+        El archivo **debe** tener las siguientes columnas exactas:
+        * `Seccion` (Ej: Efectivo, Ingresos)
+        * `Codigo` (Ej: 1105, 4100)
+        * `Descripcion` (El procedimiento a realizar)
+        * `Instrucciones` (Guía técnica para el auditor)
+    """)
+
+    # Botón para descargar plantilla
+    plantilla_data = {
+        'Seccion': ['Efectivo', 'Inventarios'],
+        'Codigo': ['A-01', 'C-05'],
+        'Descripcion': ['Realizar arqueo de caja menor sorpresivo.', 'Participar en la toma física de inventarios.'],
+        'Instrucciones': ['Asegurar presencia del custodio NIA 501.', 'Verificar estado de la mercancía.']
+    }
+    df_plantilla = pd.DataFrame(plantilla_data)
+    csv = df_plantilla.to_csv(index=False).encode('utf-8')
+    st.download_button("⬇️ Descargar Plantilla Ejemplo (CSV)", data=csv, file_name="plantilla_auditpro.csv", mime="text/csv")
+
+    st.divider()
+
+    uploaded_file = st.file_uploader("Arrastre su archivo aquí", type=['xlsx', 'csv'])
+
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+
+            # Validación de columnas
+            cols_requeridas = ['Seccion', 'Codigo', 'Descripcion', 'Instrucciones']
+            if not all(col in df.columns for col in cols_requeridas):
+                st.error(f"⚠️ Error de Formato: Faltan columnas. El archivo debe tener: {', '.join(cols_requeridas)}")
+            else:
+                st.success(f"Archivo leído correctamente. {len(df)} procedimientos encontrados.")
+                st.dataframe(df.head())
+
+                if st.button("🚀 Importar a la Auditoría Actual"):
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    
+                    # Preparamos los datos para insertar
+                    datos_insertar = []
+                    for index, row in df.iterrows():
+                        datos_insertar.append((
+                            client_id,
+                            str(row['Seccion']),
+                            str(row['Codigo']),
+                            str(row['Descripcion']),
+                            str(row['Instrucciones'])
+                        ))
+                    
+                    cursor.executemany("""
+                        INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) 
+                        VALUES (?, ?, ?, ?, ?)
+                    """, datos_insertar)
+                    
+                    conn.commit()
+                    conn.close()
+                    st.balloons()
+                    st.success("✅ ¡Importación exitosa! Puede ir al 'Programa de Trabajo' para ver los nuevos pasos.")
+
+        except Exception as e:
+            st.error(f"Ocurrió un error al leer el archivo: {e}")
+
 # --- VISTAS PRINCIPALES ---
 def vista_principal():
     user_role = st.session_state.get('user_role', "Miembro")
@@ -212,12 +283,17 @@ def vista_principal():
         if st.button("⬅️ Volver al Listado"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
         
-        m1, m2 = st.columns(2)
+        # MENÚ DE MÓDULOS (Modificado para incluir Importación)
+        m1, m2, m3 = st.columns(3)
         if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
         if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.mod = "Prog"
+        if m3.button("📥 Importar Pasos", use_container_width=True): st.session_state.mod = "Imp"
         
+        # ROUTER DE VISTAS
         if st.session_state.get('mod') == "Prog":
             modulo_programa_trabajo(st.session_state.active_id)
+        elif st.session_state.get('mod') == "Imp":
+            modulo_importacion(st.session_state.active_id)
         else:
             modulo_materialidad(st.session_state.active_id)
     else:
@@ -273,4 +349,3 @@ if __name__ == "__main__":
         vista_login()
     else:
         vista_principal()
-
