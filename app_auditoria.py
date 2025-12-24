@@ -35,13 +35,6 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 10px;
     }
-    .area-container {
-        margin-bottom: 20px;
-        padding: 10px;
-        background-color: #f8fafc;
-        border-radius: 10px;
-        border: 1px solid #e2e8f0;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -67,7 +60,6 @@ def create_tables():
         is_deleted INTEGER DEFAULT 0)''')
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
-    # Asegurar que la columna area_name existe si se creó con la versión vieja
     try:
         cursor.execute("ALTER TABLE audit_steps ADD COLUMN area_name TEXT DEFAULT 'General'")
     except:
@@ -88,7 +80,7 @@ def cargar_pasos_iniciales(conn, client_id):
     ]
     cursor = conn.cursor()
     for p in pasos:
-        cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?, ?)", p)
+        cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?, ?)", (client_id, p[0], p[1], p[2], p[3], p[4]))
     conn.commit()
 
 # --- MÓDULOS ---
@@ -126,7 +118,6 @@ def modulo_materialidad(client_id):
 def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo")
     conn = get_db_connection()
-    
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, area_name", conn, params=(client_id,))
     opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
 
@@ -147,18 +138,15 @@ def modulo_programa_trabajo(client_id):
     if seccion_f != "Todas":
         df_filtrado = df_filtrado[df_filtrado['section_name'] == seccion_f]
 
-    # JERARQUÍA: Sección -> Área (Expander) -> Paso
     for area in df_filtrado['area_name'].unique():
         with st.expander(f"📍 ÁREA: {area}", expanded=True):
             subset = df_filtrado[df_filtrado['area_name'] == area]
             for _, row in subset.iterrows():
                 sid = row['id']
                 status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
-                
-                # Sub-expander para el paso específico
                 with st.container(border=True):
                     st.markdown(f"**{status_icon} Paso {row['step_code']}:** {row['description']}")
-                    st.markdown(f'<div class="guia-box"><strong>Instrucciones:</strong> {row['instructions']}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="guia-box"><strong>Instrucciones:</strong> {row["instructions"]}</div>', unsafe_allow_html=True)
                     n_nota = st.text_area("Conclusiones:", value=row['user_notes'] or "", key=f"nt_{sid}")
                     c_est, c_save = st.columns([1, 1])
                     n_est = c_est.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
@@ -170,14 +158,28 @@ def modulo_programa_trabajo(client_id):
 
 def modulo_importacion(client_id):
     st.markdown("### 📥 Importar Pasos")
-    st.info("Formato requerido: Seccion, Area, Codigo, Descripcion, Instrucciones")
+    st.markdown("Cargue sus programas de auditoría. El archivo debe tener: **Seccion, Area, Codigo, Descripcion, Instrucciones**")
+    
+    # --- RESTAURACIÓN DEL TEMPLATE ---
+    plantilla_data = {
+        'Seccion': ['Activo', 'Pasivo'],
+        'Area': ['Caja y Bancos', 'Proveedores'],
+        'Codigo': ['A1-01', 'P1-01'],
+        'Descripcion': ['Realizar arqueo de caja.', 'Circularizar saldos.'],
+        'Instrucciones': ['Siga NIA 500.', 'Siga NIA 505.']
+    }
+    df_plantilla = pd.DataFrame(plantilla_data)
+    csv = df_plantilla.to_csv(index=False).encode('utf-8')
+    st.download_button("⬇️ Descargar Plantilla Excel (CSV)", data=csv, file_name="plantilla_pasos.csv", mime="text/csv")
+    
+    st.divider()
     up = st.file_uploader("Subir CSV/Excel", type=['xlsx', 'csv'])
     if up:
         df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
         if st.button("🚀 Procesar Importación"):
             conn = get_db_connection(); cursor = conn.cursor()
             existentes = pd.read_sql_query("SELECT section_name, area_name, step_code FROM audit_steps WHERE client_id=?", conn, params=(client_id,))
-            set_ex = set(existentes['section_name'] + "|" + existentes['area_name'] + "|" + existentes['step_code'])
+            set_ex = set(existentes['section_name'].astype(str) + "|" + existentes['area_name'].astype(str) + "|" + existentes['step_code'].astype(str))
             
             nuevos = 0
             for _, r in df.iterrows():
