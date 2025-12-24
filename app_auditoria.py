@@ -34,6 +34,23 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 10px;
     }
+    /* Estilo para que las pestañas se vean más modernas */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f8fafc;
+        border-radius: 10px 10px 0px 0px;
+        gap: 1px;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #1e3a8a !important;
+        color: white !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -69,7 +86,7 @@ def cargar_pasos_iniciales(conn, client_id):
     )
     conn.commit()
 
-# --- MÓDULOS DE AUDITORÍA ---
+# --- MÓDULOS DE AUDITORÍA (Ajustados para integrarse en pestañas) ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad (NIA 320)")
     conn = get_db_connection()
@@ -94,7 +111,7 @@ def modulo_materialidad(client_id):
         m_ranr = m_gen * (p_ranr / 100)
     
     st.columns(3)[0].metric("Mat. General", f"$ {m_gen:,.2f}")
-    if st.button("💾 Guardar Materialidad"):
+    if st.button("💾 Guardar Materialidad", key="save_mat"):
         conn = get_db_connection()
         conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", 
                      (client_id, benchmark, valor_base, p_gen, m_gen, p_perf, m_perf, p_ranr, m_ranr))
@@ -125,7 +142,6 @@ def modulo_programa_trabajo(client_id):
                 with c_est:
                     estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
                     n_est = st.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(estado_actual), key=f"es_{sid}")
-                
                 with c_save:
                     st.write(" ") 
                     if st.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
@@ -153,16 +169,19 @@ def vista_principal():
                 conn.commit(); conn.close(); st.rerun()
 
     if 'active_id' in st.session_state:
-        if st.button("⬅️ Volver al Listado"): del st.session_state.active_id; st.rerun()
+        if st.button("⬅️ Volver al Dashboard"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
-        m1, m2 = st.columns(2)
-        if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
-        if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.mod = "Prog"
-        if st.session_state.get('mod') == "Prog": modulo_programa_trabajo(st.session_state.active_id)
-        else: modulo_materialidad(st.session_state.active_id)
+        
+        # --- NUEVA NAVEGACIÓN TIPO PESTAÑAS (CHROME STYLE) ---
+        tab1, tab2 = st.tabs(["📊 Materialidad", "📝 Programa de Trabajo"])
+        
+        with tab1:
+            modulo_materialidad(st.session_state.active_id)
+        with tab2:
+            modulo_programa_trabajo(st.session_state.active_id)
+            
     else:
         st.title("💼 Dashboard AuditPro")
-        # --- LINKS EXTERNOS ---
         c_link1, c_link2 = st.columns(2)
         c_link1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
         c_link2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
@@ -177,8 +196,7 @@ def vista_principal():
                 col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
                 if col2.button("Abrir Auditoría", key=f"op_{r['id']}", use_container_width=True):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
-                    st.session_state.mod = "Mat"; st.rerun()
-                # --- BOTÓN DE BORRADO PARA ADMINISTRADORES ---
+                    st.rerun()
                 if is_admin:
                     with col3.popover("🗑️"):
                         st.warning("¿Borrar empresa?")
