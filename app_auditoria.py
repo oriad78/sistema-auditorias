@@ -128,7 +128,6 @@ def modulo_materialidad(client_id):
 def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo")
     conn = get_db_connection()
-    # Cargamos y ordenamos
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name ASC, area_name ASC, step_code ASC", conn, params=(client_id,))
     opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
 
@@ -137,7 +136,6 @@ def modulo_programa_trabajo(client_id):
         conn.close()
         return
 
-    # Filtros superiores
     c_f1, c_f2 = st.columns([2, 1])
     search = c_f1.text_input("🔍 Buscar por descripción o código:", "")
     sec_options = ["Todas"] + sorted(list(steps['section_name'].unique()))
@@ -149,32 +147,31 @@ def modulo_programa_trabajo(client_id):
     if seccion_f != "Todas":
         df_f = df_f[df_f['section_name'] == seccion_f]
 
-    # Renderizado: ÁREA (Header) -> PASOS (Expanders)
+    # Renderizado: JERARQUÍA -> ÁREA (Expander Principal) -> PASOS (Sub-Expanders)
     for area in df_f['area_name'].unique():
         st.markdown(f'<div class="area-header">📍 Área: {area}</div>', unsafe_allow_html=True)
-        subset_area = df_f[df_f['area_name'] == area]
-        
-        for _, row in subset_area.iterrows():
-            sid = row['id']
-            status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
+        with st.expander(f"Ver procedimientos de {area}", expanded=True):
+            subset_area = df_f[df_f['area_name'] == area]
             
-            with st.expander(f"{status_icon} [{row['step_code']}] - {row['description'][:100]}..."):
-                st.markdown(f"**Procedimiento:** {row['description']}")
-                st.markdown(f'<div class="guia-box"><strong>Guía Técnica / Instrucciones:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
+            for _, row in subset_area.iterrows():
+                sid = row['id']
+                status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
                 
-                n_nota = st.text_area("Conclusiones y evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=120)
-                col_e, col_b = st.columns([1, 1])
-                n_est = col_e.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
-                if col_b.button("💾 Actualizar Paso", key=f"btn_{sid}", use_container_width=True):
-                    conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
-                    conn.commit()
-                    st.toast(f"Paso {row['step_code']} guardado.")
+                with st.expander(f"{status_icon} [{row['step_code']}] - {row['description'][:100]}..."):
+                    st.markdown(f"**Procedimiento:** {row['description']}")
+                    st.markdown(f'<div class="guia-box"><strong>Guía Técnica / Instrucciones:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
+                    
+                    n_nota = st.text_area("Conclusiones y evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=120)
+                    col_e, col_b = st.columns([1, 1])
+                    n_est = col_e.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
+                    if col_b.button("💾 Actualizar Paso", key=f"btn_{sid}", use_container_width=True):
+                        conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
+                        conn.commit()
+                        st.toast(f"Paso {row['step_code']} guardado.")
     conn.close()
 
 def modulo_importacion(client_id):
     st.markdown("### 📥 Importar Pasos")
-    
-    # Plantilla de ejemplo
     st.markdown("#### 1. Obtener Plantilla")
     p_data = {
         'Seccion': ['Activo', 'Pasivo'],
