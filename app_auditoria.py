@@ -50,17 +50,11 @@ create_tables()
 # --- HELPERS: CARGA DE PASOS ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
-        # SECCIÓN: Aceptación/continuación de clientes
-        ("Aceptación/continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
-        ("Aceptación/continuación de clientes", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere una revisión de control de calidad del trabajo según la complejidad del cliente."),
-        ("Aceptación/continuación de clientes", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar la independencia de todo el equipo y verificar que no existan conflictos de interés."),
-        ("Aceptación/continuación de clientes", "5000", "(ISA 210, 300) Carta de contratación", "Verificar que la carta de encargo esté firmada por el representante legal y cubra los periodos actuales."),
-        ("Aceptación/continuación de clientes", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor."),
-        
-        # NUEVA SECCIÓN: Administración del proyecto
-        ("Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo", "Organizar la logística inicial, asignar roles específicos a los miembros del equipo y programar la reunión de inicio (kick-off)."),
-        ("Administración del proyecto", "2000", "Discutir y acordar objetivos de desarrollo personal para todos los miembros del equipo", "Establecer las metas de aprendizaje y desempeño para cada miembro del equipo durante el encargo."),
-        ("Administración del proyecto", "3000", "(ISA 300) Preparar y monitorear el avance con relación al plan del proyecto", "Actualizar el cronograma de auditoría y verificar que los hitos se estén cumpliendo según lo planeado en la estrategia general.")
+        ("Aceptación/continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
+        ("Aceptación/continuación", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere una revisión de control de calidad del trabajo según la complejidad del cliente."),
+        ("Aceptación/continuación", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar la independencia de todo el equipo y verificar que no existan conflictos de interés."),
+        ("Aceptación/continuación", "5000", "(ISA 210, 300) Carta de contratación", "Verificar que la carta de encargo esté firmada por el representante legal y cubra los periodos actuales."),
+        ("Aceptación/continuación", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor.")
     ]
     cursor = conn.cursor()
     cursor.executemany("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
@@ -112,8 +106,8 @@ def modulo_programa_trabajo(client_id):
                 sid = row['id']
                 label = f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"
                 with st.expander(label):
-                    st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA.'}</div>""", unsafe_allow_html=True)
-                    n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=150)
+                    st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente.'}</div>""", unsafe_allow_html=True)
+                    n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=200)
                     c_est, c_save = st.columns([1, 1])
                     with c_est:
                         estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
@@ -136,9 +130,11 @@ def vista_papelera():
             col1, col2, col3 = st.columns([4, 1, 1])
             col1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
             if col2.button("Restaurar", key=f"res_{r['id']}"):
-                conn.execute("UPDATE clients SET is_deleted=0 WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
+                conn.execute("UPDATE clients SET is_deleted=0 WHERE id=?", (r['id'],))
+                conn.commit(); st.rerun()
             if col3.button("Eliminar Permanente", key=f"per_{r['id']}"):
-                conn.execute("DELETE FROM clients WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
+                conn.execute("DELETE FROM clients WHERE id=?", (r['id'],))
+                conn.commit(); st.rerun()
     conn.close()
 
 # --- VISTA PRINCIPAL ---
@@ -158,28 +154,37 @@ def vista_principal():
             if n_name:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
-                cargar_pasos_iniciales(conn, cur.lastrowid); conn.commit(); conn.close(); st.rerun()
+                cargar_pasos_iniciales(conn, cur.lastrowid)
+                conn.commit(); conn.close(); st.rerun()
         if is_admin:
             st.divider()
             if st.button("🗑️ Ver Papelera"): st.session_state.view = "papelera"; st.rerun()
         st.divider()
+        st.subheader("Configuración de Vista")
         orden_tabs = st.radio("Orden de pestañas:", ["Materialidad primero", "Programa primero"])
 
     if 'active_id' in st.session_state:
-        if st.button("⬅️ Dashboard"): del st.session_state.active_id; st.rerun()
+        if st.button("⬅️ Volver al Dashboard"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
-        tabs_config = {"📊 Materialidad": modulo_materialidad, "📝 Programa de Trabajo": modulo_programa_trabajo}
+        
+        tabs_config = {
+            "📊 Materialidad": modulo_materialidad,
+            "📝 Programa de Trabajo": modulo_programa_trabajo
+        }
         nombres = list(tabs_config.keys())
         if orden_tabs == "Programa primero": nombres.reverse()
+        
         tabs = st.tabs(nombres)
         for i, nombre in enumerate(nombres):
-            with tabs[i]: tabs_config[nombre](st.session_state.active_id)
+            with tabs[i]:
+                tabs_config[nombre](st.session_state.active_id)
     else:
         st.title("💼 Dashboard AuditPro")
-        c1, c2 = st.columns(2)
-        c1.link_button("🌐 RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
-        c2.link_button("🏢 RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+        c_link1, c_link2 = st.columns(2)
+        c_link1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+        c_link2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
         st.divider()
+        
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
         for _, r in clients.iterrows():
@@ -187,11 +192,13 @@ def vista_principal():
                 col1, col2, col3 = st.columns([4, 1.5, 0.5])
                 col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
                 if col2.button("Abrir Auditoría", key=f"op_{r['id']}", use_container_width=True):
-                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
+                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
+                    st.rerun()
                 if is_admin:
                     with col3.popover("🗑️"):
                         if st.button("Confirmar Borrado", key=f"del_{r['id']}"):
-                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
+                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
+                            conn.commit(); st.rerun()
         conn.close()
 
 # --- LOGIN ---
