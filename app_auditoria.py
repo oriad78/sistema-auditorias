@@ -35,6 +35,14 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 10px;
     }
+    .area-label {
+        background-color: #e2e8f0;
+        padding: 8px;
+        border-radius: 5px;
+        font-weight: bold;
+        color: #1e3a8a;
+        margin: 15px 0 10px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -118,7 +126,7 @@ def modulo_materialidad(client_id):
 def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo")
     conn = get_db_connection()
-    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, area_name", conn, params=(client_id,))
+    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, area_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
     opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
 
     if steps.empty:
@@ -138,32 +146,33 @@ def modulo_programa_trabajo(client_id):
     if seccion_f != "Todas":
         df_filtrado = df_filtrado[df_filtrado['section_name'] == seccion_f]
 
-    # Agrupación por ÁREAS con Expander
+    # Renderizado Jerárquico: ÁREA -> EXPANDER DE PASO
     for area in df_filtrado['area_name'].unique():
-        with st.expander(f"📍 ÁREA: {area}", expanded=True):
-            subset = df_filtrado[df_filtrado['area_name'] == area]
-            for _, row in subset.iterrows():
-                sid = row['id']
-                status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
-                with st.container(border=True):
-                    st.markdown(f"**{status_icon} Paso {row['step_code']}:** {row['description']}")
-                    st.markdown(f'<div class="guia-box"><strong>Instrucciones:</strong> {row["instructions"]}</div>', unsafe_allow_html=True)
-                    n_nota = st.text_area("Conclusiones:", value=row['user_notes'] or "", key=f"nt_{sid}")
-                    c_est, c_save = st.columns([1, 1])
-                    n_est = c_est.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
-                    if c_save.button("💾 Guardar", key=f"btn_{sid}"):
-                        conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
-                        conn.commit()
-                        st.toast("Guardado")
+        st.markdown(f'<div class="area-label">📍 ÁREA: {area}</div>', unsafe_allow_html=True)
+        subset = df_filtrado[df_filtrado['area_name'] == area]
+        
+        for _, row in subset.iterrows():
+            sid = row['id']
+            status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
+            
+            # PASO RESTAURADO CON EXPANDER
+            with st.expander(f"{status_icon} Paso {row['step_code']}: {row['description'][:90]}..."):
+                st.markdown(f"**Descripción Completa:** {row['description']}")
+                st.markdown(f'<div class="guia-box"><strong>Instrucciones:</strong> {row["instructions"]}</div>', unsafe_allow_html=True)
+                
+                n_nota = st.text_area("📝 Trabajo realizado / Conclusiones:", value=row['user_notes'] or "", key=f"nt_{sid}", height=150)
+                c_est, c_save = st.columns([1, 1])
+                n_est = c_est.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
+                if c_save.button("💾 Guardar Cambios", key=f"btn_{sid}", use_container_width=True):
+                    conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
+                    conn.commit()
+                    st.toast(f"Paso {row['step_code']} actualizado")
     conn.close()
 
 def modulo_importacion(client_id):
     st.markdown("### 📥 Importar Pasos de Auditoría")
     
-    # --- CREACIÓN DE LA PLANTILLA DINÁMICA ---
     st.markdown("#### 1. Descargar Plantilla")
-    st.write("Utilice este archivo como base para cargar sus procedimientos masivamente.")
-    
     plantilla_ejemplo = {
         'Seccion': ['Disponible', 'Disponible', 'Cuentas por Cobrar'],
         'Area': ['Caja General', 'Bancos', 'Clientes Nacionales'],
@@ -172,67 +181,41 @@ def modulo_importacion(client_id):
         'Instrucciones': ['Verificar billetes y monedas.', 'Cotejar extracto vs libros.', 'Confirmar con el cliente externo.']
     }
     df_plantilla = pd.DataFrame(plantilla_ejemplo)
-    
-    # Conversión a CSV para descarga
     buffer = io.BytesIO()
     df_plantilla.to_csv(buffer, index=False, encoding='utf-8-sig')
     buffer.seek(0)
     
-    st.download_button(
-        label="⬇️ Descargar Plantilla (Excel/CSV)",
-        data=buffer,
-        file_name="plantilla_auditpro_pasos.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
+    st.download_button("⬇️ Descargar Plantilla (Excel/CSV)", data=buffer, file_name="plantilla_auditpro_pasos.csv", mime="text/csv")
     
     st.divider()
-    
-    # --- CARGA DE ARCHIVOS ---
     st.markdown("#### 2. Subir Archivo Diligenciado")
     up = st.file_uploader("Arrastre su archivo Excel o CSV aquí", type=['xlsx', 'csv'])
     
     if up:
         try:
             df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
-            
-            # Validación de Columnas
             cols_req = ['Seccion', 'Area', 'Codigo', 'Descripcion', 'Instrucciones']
             if not all(c in df.columns for c in cols_req):
-                st.error(f"⚠️ El archivo no tiene las columnas correctas. Requerido: {cols_req}")
+                st.error(f"⚠️ Columnas requeridas: {cols_req}")
             else:
-                st.success(f"Archivo detectado: {len(df)} registros listos para validar.")
-                st.dataframe(df.head(5)) # Vista previa
-
+                st.dataframe(df.head(3))
                 if st.button("🚀 Iniciar Importación con Validación de Duplicados"):
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    
-                    # Cargar existentes para evitar duplicados
+                    conn = get_db_connection(); cursor = conn.cursor()
                     existentes = pd.read_sql_query("SELECT section_name, area_name, step_code FROM audit_steps WHERE client_id=? AND is_deleted=0", conn, params=(client_id,))
                     set_ex = set(existentes['section_name'].astype(str) + "|" + existentes['area_name'].astype(str) + "|" + existentes['step_code'].astype(str))
                     
-                    nuevos = 0
-                    duplicados = 0
-                    
+                    nuevos = 0; duplicados = 0
                     for _, r in df.iterrows():
                         clave = f"{r['Seccion']}|{r['Area']}|{r['Codigo']}"
                         if clave not in set_ex:
                             cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)",
                                            (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
-                            set_ex.add(clave)
-                            nuevos += 1
-                        else:
-                            duplicados += 1
-                    
-                    conn.commit()
-                    conn.close()
-                    st.success(f"✅ Proceso finalizado: {nuevos} nuevos registros importados.")
-                    if duplicados > 0:
-                        st.warning(f"ℹ️ Se omitieron {duplicados} registros que ya existían en esta empresa.")
-        
+                            set_ex.add(clave); nuevos += 1
+                        else: duplicados += 1
+                    conn.commit(); conn.close()
+                    st.success(f"✅ Importados: {nuevos}. Duplicados omitidos: {duplicados}.")
         except Exception as e:
-            st.error(f"Error al leer el archivo: {e}")
+            st.error(f"Error: {e}")
 
 # --- VISTAS DASHBOARD ---
 def vista_principal():
@@ -298,7 +281,7 @@ def vista_login():
         if u:
             st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
             st.rerun()
-        else: st.error("Error")
+        else: st.error("Error de acceso")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
