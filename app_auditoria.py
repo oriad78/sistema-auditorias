@@ -10,29 +10,18 @@ st.set_page_config(page_title="AuditPro - Sistema Integral", layout="wide")
 st.markdown("""
     <style>
     .login-card {
-        background-color: white;
-        padding: 40px;
-        border-radius: 15px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-        max-width: 500px;
-        margin: auto;
+        background-color: white; padding: 40px; border-radius: 15px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 500px; margin: auto;
     }
     .main-title { color: #1e3a8a; font-weight: 700; text-align: center; }
     .stButton>button { border-radius: 8px; transition: all 0.3s; }
     .admin-badge {
-        background-color: #fee2e2;
-        color: #dc2626;
-        padding: 2px 8px;
-        border-radius: 5px;
-        font-size: 12px;
-        font-weight: bold;
+        background-color: #fee2e2; color: #dc2626;
+        padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: bold;
     }
     .guia-box {
-        background-color: #f0f7ff;
-        border-left: 5px solid #1e3a8a;
-        padding: 15px;
-        border-radius: 5px;
-        margin-bottom: 10px;
+        background-color: #f0f7ff; border-left: 5px solid #1e3a8a;
+        padding: 15px; border-radius: 5px; margin-bottom: 10px;
     }
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] {
@@ -54,8 +43,7 @@ def create_tables():
     cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, is_deleted INTEGER DEFAULT 0)')
     cursor.execute('CREATE TABLE IF NOT EXISTS audit_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, section_name TEXT, step_code TEXT, description TEXT, instructions TEXT, user_notes TEXT, status TEXT DEFAULT "Sin Iniciar", is_deleted INTEGER DEFAULT 0)')
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
-    conn.commit()
-    conn.close()
+    conn.commit(); conn.close()
 
 create_tables()
 
@@ -92,52 +80,59 @@ def modulo_materialidad(client_id):
             p_perf = st.slider("% Performance", 0.0, 75.0, datos[5] if datos else 50.0)
         with c3:
             p_ranr = st.slider("% RANR", 0.0, 10.0, datos[7] if datos else 5.0)
-        
         m_gen = valor_base * (p_gen / 100)
         m_perf = m_gen * (p_perf / 100)
         m_ranr = m_gen * (p_ranr / 100)
-    
     st.columns(3)[0].metric("Mat. General", f"$ {m_gen:,.2f}")
     if st.button("💾 Guardar Materialidad", key="save_mat_btn"):
         conn = get_db_connection()
-        conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", 
-                     (client_id, benchmark, valor_base, p_gen, m_gen, p_perf, m_perf, p_ranr, m_ranr))
+        conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", (client_id, benchmark, valor_base, p_gen, m_gen, p_perf, m_perf, p_ranr, m_ranr))
         conn.commit(); conn.close(); st.success("Guardado.")
 
 def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo")
     conn = get_db_connection()
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
-    opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
-    
     if steps.empty:
-        st.info("No hay pasos cargados.")
-        if st.button("Generar Pasos Iniciales"):
-            cargar_pasos_iniciales(conn, client_id); st.rerun()
-    
-    for seccion in steps['section_name'].unique():
-        st.subheader(f"📁 {seccion}")
-        for _, row in steps[steps['section_name'] == seccion].iterrows():
-            sid = row['id']
-            label = f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"
-            with st.expander(label):
-                st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente.'}</div>""", unsafe_allow_html=True)
-                n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=200)
-                c_est, c_save = st.columns([1, 1])
-                with c_est:
-                    estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
-                    n_est = st.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(estado_actual), key=f"es_{sid}")
-                with c_save:
-                    st.write(" ") 
-                    if st.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
-                        conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
-                        conn.commit(); st.toast("Progreso guardado"); st.rerun()
+        st.info("No hay pasos cargados."); st.button("Generar Pasos Iniciales", on_click=cargar_pasos_iniciales, args=(conn, client_id))
+    else:
+        for seccion in steps['section_name'].unique():
+            st.subheader(f"📁 {seccion}")
+            for _, row in steps[steps['section_name'] == seccion].iterrows():
+                with st.expander(f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"):
+                    st.markdown(f'<div class="guia-box"><strong>📖 Guía:</strong> {row["instructions"]}</div>', unsafe_allow_html=True)
+                    n_nota = st.text_area("📝 Evidencia:", value=row['user_notes'] or "", key=f"nt_{row['id']}", height=150)
+                    c1, c2 = st.columns(2)
+                    op = ["Sin Iniciar", "En Proceso", "Terminado"]
+                    n_est = c1.selectbox("Estado", op, index=op.index(row['status']) if row['status'] in op else 0, key=f"es_{row['id']}")
+                    if c2.button("💾 Guardar", key=f"btn_{row['id']}", use_container_width=True):
+                        conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, row['id']))
+                        conn.commit(); st.toast("Guardado"); st.rerun()
     conn.close()
 
-# --- VISTAS DASHBOARD ---
+# --- VISTA PAPELERA ---
+def vista_papelera():
+    st.title("🗑️ Papelera de Reciclaje")
+    if st.button("⬅️ Volver"): st.session_state.view = "main"; st.rerun()
+    conn = get_db_connection()
+    deleted = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=1", conn)
+    for _, r in deleted.iterrows():
+        with st.container(border=True):
+            col1, col2, col3 = st.columns([4, 1, 1])
+            col1.write(f"**{r['client_name']}** (NIT: {r['client_nit']})")
+            if col2.button("Restaurar", key=f"res_{r['id']}"):
+                conn.execute("UPDATE clients SET is_deleted=0 WHERE id=?", (r['id'],))
+                conn.commit(); st.rerun()
+            if col3.button("Eliminar Permanente", key=f"per_{r['id']}"):
+                conn.execute("DELETE FROM clients WHERE id=?", (r['id'],))
+                conn.commit(); st.rerun()
+    conn.close()
+
+# --- VISTA PRINCIPAL ---
 def vista_principal():
     user_role = st.session_state.get('user_role', "Miembro")
     is_admin = "Administrador" in user_role
+    if st.session_state.get('view') == "papelera": vista_papelera(); return
 
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user_name}")
@@ -150,58 +145,46 @@ def vista_principal():
             if n_name:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
-                cargar_pasos_iniciales(conn, cur.lastrowid)
-                conn.commit(); conn.close(); st.rerun()
+                cargar_pasos_iniciales(conn, cur.lastrowid); conn.commit(); conn.close(); st.rerun()
+        if is_admin:
+            st.divider()
+            if st.button("🗑️ Ver Papelera"): st.session_state.view = "papelera"; st.rerun()
         st.divider()
-        st.subheader("Configuración de Vista")
         orden_tabs = st.radio("Orden de pestañas:", ["Materialidad primero", "Programa primero"])
 
     if 'active_id' in st.session_state:
-        if st.button("⬅️ Volver al Dashboard"): del st.session_state.active_id; st.rerun()
+        if st.button("⬅️ Dashboard"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
-        
-        # Lógica de reordenamiento de pestañas
-        tabs_config = {
-            "📊 Materialidad": modulo_materialidad,
-            "📝 Programa de Trabajo": modulo_programa_trabajo
-        }
+        tabs_config = {"📊 Materialidad": modulo_materialidad, "📝 Programa de Trabajo": modulo_programa_trabajo}
         nombres = list(tabs_config.keys())
         if orden_tabs == "Programa primero": nombres.reverse()
-        
         tabs = st.tabs(nombres)
         for i, nombre in enumerate(nombres):
-            with tabs[i]:
-                tabs_config[nombre](st.session_state.active_id)
+            with tabs[i]: tabs_config[nombre](st.session_state.active_id)
     else:
         st.title("💼 Dashboard AuditPro")
-        c_link1, c_link2 = st.columns(2)
-        c_link1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
-        c_link2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+        c1, c2 = st.columns(2)
+        c1.link_button("🌐 RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+        c2.link_button("🏢 RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
         st.divider()
-        
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
-        if clients.empty: st.info("No hay clientes activos registrados.")
         for _, r in clients.iterrows():
             with st.container(border=True):
                 col1, col2, col3 = st.columns([4, 1.5, 0.5])
                 col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
                 if col2.button("Abrir Auditoría", key=f"op_{r['id']}", use_container_width=True):
-                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
-                    st.rerun()
+                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
                 if is_admin:
                     with col3.popover("🗑️"):
-                        st.warning("¿Borrar empresa?")
-                        if st.button("Confirmar", key=f"del_{r['id']}"):
-                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
-                            conn.commit(); st.rerun()
+                        if st.button("Confirmar Borrado", key=f"del_{r['id']}"):
+                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
         conn.close()
 
 # --- LOGIN ---
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 def vista_login():
-    st.markdown('<div class="login-card">', unsafe_allow_html=True)
-    st.markdown('<h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="login-card"><h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
     e = st.text_input("Correo"); p = st.text_input("Contraseña", type="password")
     if st.button("Ingresar", use_container_width=True):
         conn = get_db_connection()
