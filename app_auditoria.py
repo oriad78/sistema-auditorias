@@ -53,7 +53,7 @@ def create_tables():
 
 create_tables()
 
-# --- HELPER: CARGA DE PASOS INICIALES (BASADO EN TU IMAGEN) ---
+# --- HELPER: CARGA DE PASOS INICIALES ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
         ("Aceptación/continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
@@ -115,14 +115,10 @@ def modulo_programa_trabajo(client_id):
         st.subheader(f"📁 {seccion}")
         for _, row in steps[steps['section_name'] == seccion].iterrows():
             sid = row['id']
-            # Título del paso para el Expander (esto permite ocultar/mostrar)
             label = f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"
             
             with st.expander(label):
-                # 1. GUÍA (INSTRUCCIONES)
-                st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente para este paso.'}</div>""", unsafe_allow_html=True)
-                
-                # 2. ESPACIO PARA DESARROLLAR EL TRABAJO
+                st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente.'}</div>""", unsafe_allow_html=True)
                 n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=200)
                 
                 c_est, c_save = st.columns([1, 1])
@@ -131,20 +127,20 @@ def modulo_programa_trabajo(client_id):
                     n_est = st.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(estado_actual), key=f"es_{sid}")
                 
                 with c_save:
-                    st.write(" ") # Espaciador
+                    st.write(" ") 
                     if st.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
                         conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
                         conn.commit(); st.toast("Progreso guardado"); st.rerun()
     conn.close()
 
-# --- VISTAS DASHBOARD (SIN CAMBIOS ESTRUCTURALES) ---
+# --- VISTAS PRINCIPALES ---
 def vista_principal():
     user_role = st.session_state.get('user_role', "Miembro")
-    if st.session_state.get('view') == "papelera":
-        vista_papelera(); return
+    is_admin = "Administrador" in user_role
 
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user_name}")
+        st.markdown(f"<span class='admin-badge'>{user_role}</span>", unsafe_allow_html=True)
         if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
         st.subheader("Registrar Empresa")
@@ -166,28 +162,43 @@ def vista_principal():
         else: modulo_materialidad(st.session_state.active_id)
     else:
         st.title("💼 Dashboard AuditPro")
+        # --- LINKS EXTERNOS ---
+        c_link1, c_link2 = st.columns(2)
+        c_link1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+        c_link2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+        st.divider()
+        
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
+        if clients.empty: st.info("No hay clientes activos registrados.")
         for _, r in clients.iterrows():
             with st.container(border=True):
-                col1, col2 = st.columns([4, 1])
+                col1, col2, col3 = st.columns([4, 1.5, 0.5])
                 col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
-                if col2.button("Abrir", key=f"op_{r['id']}"):
+                if col2.button("Abrir Auditoría", key=f"op_{r['id']}", use_container_width=True):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
                     st.session_state.mod = "Mat"; st.rerun()
+                # --- BOTÓN DE BORRADO PARA ADMINISTRADORES ---
+                if is_admin:
+                    with col3.popover("🗑️"):
+                        st.warning("¿Borrar empresa?")
+                        if st.button("Confirmar", key=f"del_{r['id']}"):
+                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
+                            conn.commit(); st.rerun()
         conn.close()
 
-# --- LOGIN (SIN CAMBIOS) ---
+# --- LOGIN ---
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 def vista_login():
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.markdown('<h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
-    e = st.text_input("Correo"); p = st.text_input("Pass", type="password")
+    e = st.text_input("Correo"); p = st.text_input("Contraseña", type="password")
     if st.button("Ingresar", use_container_width=True):
         conn = get_db_connection()
         u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
         conn.close()
         if u: st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]; st.rerun()
+        else: st.error("Credenciales incorrectas")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
