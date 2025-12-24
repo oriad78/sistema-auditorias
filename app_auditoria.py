@@ -90,4 +90,135 @@ def modulo_materialidad(client_id):
             p_ranr = st.slider("% RANR", 0.0, 10.0, datos[7] if datos else 5.0)
         
         m_gen = valor_base * (p_gen / 100)
-        m_perf = m
+        m_perf = m_gen * (p_perf / 100)
+        m_ranr = m_gen * (p_ranr / 100)
+    
+    st.columns(3)[0].metric("Mat. General", f"$ {m_gen:,.2f}")
+    if st.button("💾 Guardar Materialidad"):
+        conn = get_db_connection()
+        conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", 
+                     (client_id, benchmark, valor_base, p_gen, m_gen, p_perf, m_perf, p_ranr, m_ranr))
+        conn.commit(); conn.close()
+        st.success("Guardado.")
+
+def modulo_programa_trabajo(client_id):
+    st.markdown("### 📝 Programa de Trabajo")
+    conn = get_db_connection()
+    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
+    opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
+    
+    if steps.empty:
+        st.info("No hay pasos cargados.")
+        if st.button("Generar Pasos Iniciales"):
+            cargar_pasos_iniciales(conn, client_id)
+            st.rerun()
+    
+    for seccion in steps['section_name'].unique():
+        st.subheader(f"📁 {seccion}")
+        for _, row in steps[steps['section_name'] == seccion].iterrows():
+            sid = row['id']
+            label = f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"
+            
+            with st.expander(label):
+                st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente.'}</div>""", unsafe_allow_html=True)
+                n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=200)
+                
+                c_est, c_save = st.columns([1, 1])
+                with c_est:
+                    estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
+                    n_est = st.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(estado_actual), key=f"es_{sid}")
+                
+                with c_save:
+                    st.write(" ") 
+                    if st.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
+                        conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
+                        conn.commit()
+                        st.toast("Progreso guardado")
+                        st.rerun()
+    conn.close()
+
+# --- VISTAS PRINCIPALES ---
+def vista_principal():
+    user_role = st.session_state.get('user_role', "Miembro")
+    is_admin = "Administrador" in user_role
+
+    with st.sidebar:
+        st.markdown(f"### 👤 {st.session_state.user_name}")
+        st.markdown(f"<span class='admin-badge'>{user_role}</span>", unsafe_allow_html=True)
+        if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
+        st.divider()
+        st.subheader("Registrar Empresa")
+        n_name = st.text_input("Nombre"); n_nit = st.text_input("NIT")
+        if st.button("Registrar Cliente"):
+            if n_name:
+                conn = get_db_connection(); cur = conn.cursor()
+                cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
+                cargar_pasos_iniciales(conn, cur.lastrowid)
+                conn.commit(); conn.close()
+                st.rerun()
+
+    if 'active_id' in st.session_state:
+        if st.button("⬅️ Volver al Listado"): del st.session_state.active_id; st.rerun()
+        st.title(f"📂 {st.session_state.active_name}")
+        
+        m1, m2 = st.columns(2)
+        if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
+        if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.mod = "Prog"
+        
+        if st.session_state.get('mod') == "Prog":
+            modulo_programa_trabajo(st.session_state.active_id)
+        else:
+            modulo_materialidad(st.session_state.active_id)
+    else:
+        st.title("💼 Dashboard AuditPro")
+        c_link1, c_link2 = st.columns(2)
+        c_link1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+        c_link2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+        st.divider()
+        
+        conn = get_db_connection()
+        clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
+        if clients.empty:
+            st.info("No hay clientes activos registrados.")
+        
+        for _, r in clients.iterrows():
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([4, 1.5, 0.5])
+                col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
+                if col2.button("Abrir Auditoría", key=f"op_{r['id']}", use_container_width=True):
+                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
+                    st.session_state.mod = "Mat"
+                    st.rerun()
+                
+                if is_admin:
+                    with col3.popover("🗑️"):
+                        st.warning("¿Borrar empresa?")
+                        if st.button("Confirmar", key=f"del_{r['id']}"):
+                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
+                            conn.commit()
+                            st.rerun()
+        conn.close()
+
+# --- LOGIN ---
+def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
+
+def vista_login():
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
+    e = st.text_input("Correo"); p = st.text_input("Contraseña", type="password")
+    if st.button("Ingresar", use_container_width=True):
+        conn = get_db_connection()
+        u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
+        conn.close()
+        if u:
+            st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
+            st.rerun()
+        else:
+            st.error("Credenciales incorrectas")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    if 'user_id' not in st.session_state:
+        vista_login()
+    else:
+        vista_principal()
