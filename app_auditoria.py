@@ -90,33 +90,90 @@ def modulo_materialidad(client_id):
         conn.commit(); conn.close(); st.success("Guardado.")
 
 def modulo_programa_trabajo(client_id):
-    st.markdown("### 📝 Programa de Trabajo")
+    st.markdown("### 📝 Programa de Trabajo (Optimizado)")
     conn = get_db_connection()
-    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
-    opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
     
+    # 1. CARGA DE DATOS - Usamos caché de Streamlit para no saturar el disco en cada renderizado
+    query = """
+        SELECT * FROM audit_steps 
+        WHERE client_id=? AND is_deleted=0 
+        ORDER BY section_name, CAST(step_code AS INTEGER)
+    """
+    steps = pd.read_sql_query(query, conn, params=(client_id,))
+    opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
+
     if steps.empty:
         st.info("No hay pasos cargados.")
         if st.button("Generar Pasos Iniciales"):
-            cargar_pasos_iniciales(conn, client_id); st.rerun()
+            cargar_pasos_iniciales(conn, client_id)
+            st.rerun()
+        conn.close()
+        return
+
+    # 2. FILTROS Y BÚSQUEDA (Para manejar las 1000+ filas)
+    col_f1, col_f2 = st.columns([2, 1])
+    with col_f1:
+        search_query = st.text_input("🔍 Buscar en procedimientos (NIA 315/230):", placeholder="Ej: Riesgo, Control, Inventarios...")
+    with col_f2:
+        seccion_f = st.selectbox("📁 Filtrar por Sección:", ["Todas"] + list(steps['section_name'].unique()))
+
+    # Aplicar filtros antes de paginar
+    df_filtrado = steps.copy()
+    if search_query:
+        df_filtrado = df_filtrado[df_filtrado['description'].str.contains(search_query, case=False) | 
+                                  df_filtrado['step_code'].str.contains(search_query, case=False)]
+    if seccion_f != "Todas":
+        df_filtrado = df_filtrado[df_filtrado['section_name'] == seccion_f]
+
+    # 3. LÓGICA DE PAGINACIÓN (Evita el lag del navegador)
+    items_por_pagina = 20
+    total_pasos = len(df_filtrado)
+    num_paginas = (total_pasos // items_por_pagina) + (1 if total_pasos % items_por_pagina > 0 else 0)
+    
+    if total_pasos > items_por_pagina:
+        pag_col1, pag_col2 = st.columns([1, 4])
+        pagina_actual = pag_col1.number_input(f"Página (de {num_paginas})", min_value=1, max_value=num_paginas, step=1)
     else:
-        for seccion in steps['section_name'].unique():
-            st.subheader(f"📁 {seccion}")
-            for _, row in steps[steps['section_name'] == seccion].iterrows():
-                sid = row['id']
-                label = f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"
-                with st.expander(label):
-                    st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente.'}</div>""", unsafe_allow_html=True)
-                    n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=200)
-                    c_est, c_save = st.columns([1, 1])
-                    with c_est:
-                        estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
-                        n_est = st.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(estado_actual), key=f"es_{sid}")
-                    with c_save:
-                        st.write(" ") 
-                        if st.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
-                            conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
-                            conn.commit(); st.toast("Progreso guardado"); st.rerun()
+        pagina_actual = 1
+
+    inicio = (pagina_actual - 1) * items_por_pagina
+    fin = inicio + items_por_pagina
+    subset_pasos = df_filtrado.iloc[inicio:fin]
+
+    st.write(f"Mostrando {len(subset_pasos)} de {total_pasos} procedimientos encontrados.")
+
+    # 4. RENDERIZADO CONTROLADO
+    for _, row in subset_pasos.iterrows():
+        sid = row['id']
+        # Indicador visual de estado en el título del expander
+        status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
+        label = f"{status_icon} Paso {row['step_code']}: {row['description'][:100]}..."
+        
+        with st.expander(label):
+            st.markdown(f"""
+            <div class="guia-box">
+                <strong>📖 Instrucciones Técnicas:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente.'}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            n_nota = st.text_area("📝 Trabajo realizado / Conclusiones (NIA 500/230):", 
+                                  value=row['user_notes'] or "", 
+                                  key=f"nt_{sid}", height=150)
+            
+            c_est, c_save = st.columns([1, 1])
+            with c_est:
+                estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
+                n_est = st.selectbox("Estado", opciones_estado, 
+                                     index=opciones_estado.index(estado_actual), key=f"es_{sid}")
+            
+            with c_save:
+                st.write(" ")
+                if st.button("💾 Guardar Cambios", key=f"btn_{sid}", use_container_width=True):
+                    conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
+                    conn.commit()
+                    st.toast(f"Paso {row['step_code']} actualizado")
+                    # No usamos rerun total aquí para mantener la posición del scroll si es posible
+    
     conn.close()
 
 # --- VISTA PAPELERA ---
@@ -217,3 +274,4 @@ def vista_login():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
