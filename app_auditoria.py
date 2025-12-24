@@ -47,18 +47,20 @@ def create_tables():
 
 create_tables()
 
-# --- HELPERS: CARGA DE PASOS (Estructura de Carpetas) ---
+# --- HELPERS: CARGA DE PASOS ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
-        # CARPETA: Aceptación/continuación
-        ("Aceptación/continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente."),
-        ("Aceptación/continuación de clientes", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere revisión de calidad."),
-        ("Aceptación/continuación de clientes", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar independencia."),
+        # SECCIÓN: Aceptación/continuación de clientes
+        ("Aceptación/continuación de clientes", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
+        ("Aceptación/continuación de clientes", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere una revisión de control de calidad del trabajo según la complejidad del cliente."),
+        ("Aceptación/continuación de clientes", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar la independencia de todo el equipo y verificar que no existan conflictos de interés."),
+        ("Aceptación/continuación de clientes", "5000", "(ISA 210, 300) Carta de contratación", "Verificar que la carta de encargo esté firmada por el representante legal y cubra los periodos actuales."),
+        ("Aceptación/continuación de clientes", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor."),
         
-        # CARPETA NUEVA: Administración del proyecto
-        ("Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo", "Organizar logística y roles."),
-        ("Administración del proyecto", "2000", "Discutir y acordar objetivos de desarrollo personal", "Metas de aprendizaje del equipo."),
-        ("Administración del proyecto", "3000", "(ISA 300) Preparar y monitorear el avance", "Verificar cronograma vs ejecución.")
+        # NUEVA SECCIÓN: Administración del proyecto
+        ("Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo", "Organizar la logística inicial, asignar roles específicos a los miembros del equipo y programar la reunión de inicio (kick-off)."),
+        ("Administración del proyecto", "2000", "Discutir y acordar objetivos de desarrollo personal para todos los miembros del equipo", "Establecer las metas de aprendizaje y desempeño para cada miembro del equipo durante el encargo."),
+        ("Administración del proyecto", "3000", "(ISA 300) Preparar y monitorear el avance con relación al plan del proyecto", "Actualizar el cronograma de auditoría y verificar que los hitos se estén cumpliendo según lo planeado en la estrategia general.")
     ]
     cursor = conn.cursor()
     cursor.executemany("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
@@ -84,11 +86,11 @@ def modulo_materialidad(client_id):
             p_perf = st.slider("% Performance", 0.0, 75.0, datos[5] if datos else 50.0)
         with c3:
             p_ranr = st.slider("% RANR", 0.0, 10.0, datos[7] if datos else 5.0)
-        
-        m_gen, m_perf, m_ranr = valor_base*(p_gen/100), (valor_base*(p_gen/100))*(p_perf/100), (valor_base*(p_gen/100))*(p_ranr/100)
-    
+        m_gen = valor_base * (p_gen / 100)
+        m_perf = m_gen * (p_perf / 100)
+        m_ranr = m_gen * (p_ranr / 100)
     st.columns(3)[0].metric("Mat. General", f"$ {m_gen:,.2f}")
-    if st.button("💾 Guardar Materialidad"):
+    if st.button("💾 Guardar Materialidad", key="save_mat_btn"):
         conn = get_db_connection()
         conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", (client_id, benchmark, valor_base, p_gen, m_gen, p_perf, m_perf, p_ranr, m_ranr))
         conn.commit(); conn.close(); st.success("Guardado.")
@@ -97,27 +99,30 @@ def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo")
     conn = get_db_connection()
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
+    opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
     
     if steps.empty:
-        if st.button("Generar Estructura de Trabajo"):
+        st.info("No hay pasos cargados.")
+        if st.button("Generar Pasos Iniciales"):
             cargar_pasos_iniciales(conn, client_id); st.rerun()
     else:
-        # Aquí se crean las "Carpetas" por sección
         for seccion in steps['section_name'].unique():
-            with st.expander(f"📂 SECCIÓN: {seccion}", expanded=False):
-                seccion_steps = steps[steps['section_name'] == seccion]
-                for _, row in seccion_steps.iterrows():
-                    # Pasos dentro de la carpeta
-                    with st.container(border=True):
-                        st.markdown(f"**Paso {row['step_code']}: {row['description']}**")
-                        st.caption(f"Guía: {row['instructions']}")
-                        n_nota = st.text_area("Evidencia:", value=row['user_notes'] or "", key=f"nt_{row['id']}", height=100)
-                        c1, c2 = st.columns(2)
-                        op = ["Sin Iniciar", "En Proceso", "Terminado"]
-                        n_est = c1.selectbox("Estado", op, index=op.index(row['status']) if row['status'] in op else 0, key=f"es_{row['id']}")
-                        if c2.button("💾 Guardar Paso", key=f"btn_{row['id']}"):
-                            conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, row['id']))
-                            conn.commit(); st.toast("Paso actualizado"); st.rerun()
+            st.subheader(f"📁 {seccion}")
+            for _, row in steps[steps['section_name'] == seccion].iterrows():
+                sid = row['id']
+                label = f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"
+                with st.expander(label):
+                    st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA.'}</div>""", unsafe_allow_html=True)
+                    n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=150)
+                    c_est, c_save = st.columns([1, 1])
+                    with c_est:
+                        estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
+                        n_est = st.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(estado_actual), key=f"es_{sid}")
+                    with c_save:
+                        st.write(" ") 
+                        if st.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
+                            conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
+                            conn.commit(); st.toast("Progreso guardado"); st.rerun()
     conn.close()
 
 # --- VISTA PAPELERA ---
@@ -147,32 +152,30 @@ def vista_principal():
         st.markdown(f"<span class='admin-badge'>{user_role}</span>", unsafe_allow_html=True)
         if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
-        st.subheader("Configuración")
-        orden_tabs = st.radio("Orden de pestañas:", ["Materialidad primero", "Programa primero"])
-        if is_admin:
-            if st.button("🗑️ Ver Papelera"): st.session_state.view = "papelera"; st.rerun()
-        st.divider()
-        st.subheader("Nueva Empresa")
+        st.subheader("Registrar Empresa")
         n_name = st.text_input("Nombre"); n_nit = st.text_input("NIT")
-        if st.button("Registrar"):
+        if st.button("Registrar Cliente"):
             if n_name:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
                 cargar_pasos_iniciales(conn, cur.lastrowid); conn.commit(); conn.close(); st.rerun()
+        if is_admin:
+            st.divider()
+            if st.button("🗑️ Ver Papelera"): st.session_state.view = "papelera"; st.rerun()
+        st.divider()
+        orden_tabs = st.radio("Orden de pestañas:", ["Materialidad primero", "Programa primero"])
 
     if 'active_id' in st.session_state:
         if st.button("⬅️ Dashboard"): del st.session_state.active_id; st.rerun()
-        st.title(f"💼 Expediente: {st.session_state.active_name}")
-        
+        st.title(f"📂 {st.session_state.active_name}")
         tabs_config = {"📊 Materialidad": modulo_materialidad, "📝 Programa de Trabajo": modulo_programa_trabajo}
         nombres = list(tabs_config.keys())
         if orden_tabs == "Programa primero": nombres.reverse()
-        
         tabs = st.tabs(nombres)
         for i, nombre in enumerate(nombres):
             with tabs[i]: tabs_config[nombre](st.session_state.active_id)
     else:
-        st.title("📂 AuditPro - Dashboard")
+        st.title("💼 Dashboard AuditPro")
         c1, c2 = st.columns(2)
         c1.link_button("🌐 RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
         c2.link_button("🏢 RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
@@ -183,11 +186,11 @@ def vista_principal():
             with st.container(border=True):
                 col1, col2, col3 = st.columns([4, 1.5, 0.5])
                 col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
-                if col2.button("Abrir", key=f"op_{r['id']}", use_container_width=True):
+                if col2.button("Abrir Auditoría", key=f"op_{r['id']}", use_container_width=True):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
                 if is_admin:
                     with col3.popover("🗑️"):
-                        if st.button("Borrar", key=f"del_{r['id']}"):
+                        if st.button("Confirmar Borrado", key=f"del_{r['id']}"):
                             conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
         conn.close()
 
@@ -201,7 +204,7 @@ def vista_login():
         u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
         conn.close()
         if u: st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]; st.rerun()
-        else: st.error("Error en credenciales")
+        else: st.error("Credenciales incorrectas")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
