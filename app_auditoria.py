@@ -2,7 +2,6 @@ import hashlib
 import sqlite3
 import pandas as pd
 import streamlit as st
-from datetime import datetime
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AuditPro - Sistema Integral", layout="wide")
@@ -10,11 +9,31 @@ st.set_page_config(page_title="AuditPro - Sistema Integral", layout="wide")
 # --- ESTILOS PROFESIONALES (CSS) ---
 st.markdown("""
     <style>
-    .login-card { background-color: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
+    .login-card {
+        background-color: white;
+        padding: 40px;
+        border-radius: 15px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        max-width: 500px;
+        margin: auto;
+    }
     .main-title { color: #1e3a8a; font-weight: 700; text-align: center; }
     .stButton>button { border-radius: 8px; transition: all 0.3s; }
-    .admin-badge { background-color: #fee2e2; color: #dc2626; padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: bold; }
-    .guia-box { background-color: #f0f7ff; border-left: 5px solid #1e3a8a; padding: 15px; border-radius: 5px; margin-bottom: 10px; }
+    .admin-badge {
+        background-color: #fee2e2;
+        color: #dc2626;
+        padding: 2px 8px;
+        border-radius: 5px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+    .guia-box {
+        background-color: #f0f7ff;
+        border-left: 5px solid #1e3a8a;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 10px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -37,36 +56,48 @@ create_tables()
 # --- HELPER: CARGA DE PASOS INICIALES ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
-        ("Aceptación/continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
-        ("Aceptación/continuación", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere una revisión de control de calidad del trabajo según la complejidad del cliente."),
-        ("Aceptación/continuación", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar la independencia de todo el equipo y verificar que no existan conflictos de interés."),
-        ("Aceptación/continuación", "5000", "(ISA 210, 300) Carta de contratación", "Verificar que la carta de encargo esté firmada por el representante legal y cubra los periodos actuales."),
-        ("Aceptación/continuación", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor.")
+       ("Aceptación/continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
+       ("Aceptación/continuación", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere una revisión de control de calidad del trabajo según la complejidad del cliente."),
+       ("Aceptación/continuación", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar la independencia de todo el equipo y verificar que no existan conflictos de interés."),
+       ("Aceptación/continuación", "5000", "(ISA 210, 300) Carta de contratación", "Verificar que la carta de encargo esté firmada por el representante legal y cubra los periodos actuales."),
+       ("Aceptación/continuación", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor.")
     ]
     cursor = conn.cursor()
-    cursor.executemany("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
-        [(client_id, p[0], p[1], p[2], p[3]) for p in pasos])
+    cursor.executemany(
+        "INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
+        [(client_id, p[0], p[1], p[2], p[3]) for p in pasos]
+    )
     conn.commit()
 
-# --- NUEVO MÓDULO: IMPORTACIÓN MASIVA ---
+# --- NUEVA FUNCIÓN: MÓDULO IMPORTACIÓN ---
 def modulo_importacion_masiva(client_id):
-    st.markdown("### 📥 Importación Masiva (NIA 230)")
-    st.info("Suba su Excel con columnas: section_name, step_code, description, instructions")
-    archivo = st.file_uploader("Seleccionar Excel", type=['xlsx'])
-    if archivo:
+    st.markdown("### 📥 Carga Masiva de Procedimientos")
+    st.markdown('<div class="guia-box"><strong>Instrucciones:</strong> El Excel debe tener las columnas: <em>section_name, step_code, description, instructions</em>.</div>', unsafe_allow_html=True)
+    
+    archivo = st.file_uploader("Seleccione el archivo Excel (.xlsx)", type=['xlsx'])
+    
+    if archivo is not None:
         try:
-            df = pd.read_excel(archivo)
-            st.dataframe(df.head())
-            if st.button("Confirmar Carga de todos los pasos"):
+            df_import = pd.read_excel(archivo)
+            st.success(f"Se han detectado {len(df_import)} registros para cargar.")
+            st.dataframe(df_import.head(10)) # Vista previa de los primeros 10
+            
+            if st.button("Confirmar e Importar a Base de Datos"):
                 conn = get_db_connection()
-                for _, r in df.iterrows():
-                    conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)",
-                                 (client_id, str(r['section_name']), str(r['step_code']), str(r['description']), str(r['instructions'])))
-                conn.commit(); conn.close()
-                st.success("Carga exitosa"); st.rerun()
-        except Exception as e: st.error(f"Error: {e}")
+                # Insertar cada fila del Excel vinculado al cliente actual
+                for _, fila in df_import.iterrows():
+                    conn.execute("""
+                        INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) 
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (client_id, str(fila['section_name']), str(fila['step_code']), str(fila['description']), str(fila['instructions'])))
+                conn.commit()
+                conn.close()
+                st.success("Pasos importados correctamente. Vaya a 'Programa de Trabajo' para verlos.")
+                st.balloons()
+        except Exception as e:
+            st.error(f"Error al procesar el Excel: {e}")
 
-# --- MÓDULOS DE AUDITORÍA ORIGINALES ---
+# --- MÓDULOS DE AUDITORÍA ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad (NIA 320)")
     conn = get_db_connection()
@@ -85,9 +116,11 @@ def modulo_materialidad(client_id):
             p_perf = st.slider("% Performance", 0.0, 75.0, datos[5] if datos else 50.0)
         with c3:
             p_ranr = st.slider("% RANR", 0.0, 10.0, datos[7] if datos else 5.0)
+        
         m_gen = valor_base * (p_gen / 100)
         m_perf = m_gen * (p_perf / 100)
         m_ranr = m_gen * (p_ranr / 100)
+    
     st.columns(3)[0].metric("Mat. General", f"$ {m_gen:,.2f}")
     if st.button("💾 Guardar Materialidad"):
         conn = get_db_connection()
@@ -103,23 +136,30 @@ def modulo_programa_trabajo(client_id):
     
     if steps.empty:
         st.info("No hay pasos cargados.")
-        if st.button("Generar Pasos Iniciales"): cargar_pasos_iniciales(conn, client_id); st.rerun()
-    else:
-        # FILTRO POR SECCIÓN (RECUPERADO)
-        secciones = ["Todas"] + list(steps['section_name'].unique())
-        filtro_sec = st.selectbox("Filtrar por Sección", secciones)
-        
-        df_mostrar = steps if filtro_sec == "Todas" else steps[steps['section_name'] == filtro_sec]
-
-        for _, row in df_mostrar.iterrows():
+        if st.button("Generar Pasos Iniciales"):
+            cargar_pasos_iniciales(conn, client_id); st.rerun()
+    
+    # Mantenemos los filtros originales
+    for seccion in steps['section_name'].unique():
+        st.subheader(f"📁 {seccion}")
+        for _, row in steps[steps['section_name'] == seccion].iterrows():
             sid = row['id']
-            with st.expander(f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"):
-                st.markdown(f'<div class="guia-box"><strong>📖 Guía:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
-                n_nota = st.text_area("📝 Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}")
-                n_est = st.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status']), key=f"es_{sid}")
-                if st.button("💾 Guardar Avance", key=f"btn_{sid}"):
-                    conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
-                    conn.commit(); st.rerun()
+            label = f"Paso {row['step_code']}: {row['description']} | [{row['status']}]"
+            
+            with st.expander(label):
+                st.markdown(f"""<div class="guia-box"><strong>📖 Guía para el auditor:</strong><br>{row['instructions'] or 'Siga los lineamientos de la NIA correspondiente.'}</div>""", unsafe_allow_html=True)
+                n_nota = st.text_area("📝 Trabajo realizado / Evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=200)
+                
+                c_est, c_save = st.columns([1, 1])
+                with c_est:
+                    estado_actual = row['status'] if row['status'] in opciones_estado else "Sin Iniciar"
+                    n_est = st.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(estado_actual), key=f"es_{sid}")
+                
+                with c_save:
+                    st.write(" ") 
+                    if st.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
+                        conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
+                        conn.commit(); st.toast("Progreso guardado"); st.rerun()
     conn.close()
 
 # --- VISTAS PRINCIPALES ---
@@ -145,18 +185,21 @@ def vista_principal():
         if st.button("⬅️ Volver al Listado"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
         
-        # BOTONES DE SELECCIÓN DE MÓDULO (TODOS RECUPERADOS)
+        # AGREGADO TERCER BOTÓN PARA CARGA MASIVA SIN AFECTAR LOS ANTERIORES
         m1, m2, m3 = st.columns(3)
         if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
         if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.mod = "Prog"
-        if m3.button("📥 Carga Masiva", use_container_width=True): st.session_state.mod = "Imp"
-        
-        if st.session_state.get('mod') == "Prog": modulo_programa_trabajo(st.session_state.active_id)
-        elif st.session_state.get('mod') == "Imp": modulo_importacion_masiva(st.session_state.active_id)
-        else: modulo_materialidad(st.session_state.active_id)
+        if m3.button("📥 Importar Pasos", use_container_width=True): st.session_state.mod = "Imp"
+
+        if st.session_state.get('mod') == "Prog": 
+            modulo_programa_trabajo(st.session_state.active_id)
+        elif st.session_state.get('mod') == "Imp":
+            modulo_importacion_masiva(st.session_state.active_id)
+        else: 
+            modulo_materialidad(st.session_state.active_id)
     else:
         st.title("💼 Dashboard AuditPro")
-        # LINKS EXTERNOS (RECUPERADOS)
+        # RECUPERADOS: LINKS EXTERNOS DIAN Y RUES
         c_link1, c_link2 = st.columns(2)
         c_link1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
         c_link2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
@@ -164,6 +207,8 @@ def vista_principal():
         
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
+        if clients.empty:
+            st.info("No hay clientes activos registrados.")
         for _, r in clients.iterrows():
             with st.container(border=True):
                 col1, col2, col3 = st.columns([4, 1.5, 0.5])
@@ -173,7 +218,8 @@ def vista_principal():
                     st.session_state.mod = "Mat"; st.rerun()
                 if is_admin:
                     with col3.popover("🗑️"):
-                        if st.button("Confirmar Borrado", key=f"del_{r['id']}"):
+                        st.warning("¿Borrar empresa?")
+                        if st.button("Confirmar", key=f"del_{r['id']}"):
                             conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
                             conn.commit(); st.rerun()
         conn.close()
@@ -188,10 +234,15 @@ def vista_login():
         conn = get_db_connection()
         u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
         conn.close()
-        if u: st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]; st.rerun()
-        else: st.error("Credenciales incorrectas")
+        if u:
+            st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
+            st.rerun()
+        else:
+            st.error("Credenciales incorrectas")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    if 'user_id' not in st.session_state: vista_login()
-    else: vista_principal()
+    if 'user_id' not in st.session_state:
+        vista_login()
+    else:
+        vista_principal()
