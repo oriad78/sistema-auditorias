@@ -35,13 +35,15 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 10px;
     }
-    .area-label {
-        background-color: #e2e8f0;
-        padding: 8px;
-        border-radius: 5px;
+    .area-header {
+        background-color: #f1f5f9;
+        padding: 10px;
+        border-radius: 8px;
+        border-left: 8px solid #3b82f6;
+        margin: 20px 0 10px 0;
         font-weight: bold;
-        color: #1e3a8a;
-        margin: 15px 0 10px 0;
+        color: #1e40af;
+        font-size: 1.1em;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -81,10 +83,10 @@ create_tables()
 # --- HELPER: CARGA DE PASOS INICIALES ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
-        ("Planeación", "Aceptación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación", "Realice evaluación de riesgos del cliente."),
-        ("Planeación", "Aceptación", "2000", "(ISA 220) Designar QRP", "Evaluar necesidad de revisión de calidad."),
-        ("Planeación", "Ética", "4000", "(ISA 200) Requisitos éticos", "Documentar independencia del equipo."),
-        ("Planeación", "Contratación", "5000", "(ISA 210) Carta de contratación", "Verificar firma del representante legal.")
+        ("Planeación", "Aceptación", "1000", "(ISA 220, 300) Evaluar aceptación", "Realice evaluación de riesgos."),
+        ("Planeación", "Aceptación", "2000", "(ISA 220) Designar QRP", "Evaluar revisión de calidad."),
+        ("Planeación", "Ética", "4000", "(ISA 200) Requisitos éticos", "Documentar independencia."),
+        ("Planeación", "Contratación", "5000", "(ISA 210) Carta encargo", "Verificar firma representante.")
     ]
     cursor = conn.cursor()
     for p in pasos:
@@ -126,7 +128,8 @@ def modulo_materialidad(client_id):
 def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo")
     conn = get_db_connection()
-    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, area_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
+    # Cargamos y ordenamos
+    steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name ASC, area_name ASC, step_code ASC", conn, params=(client_id,))
     opciones_estado = ["Sin Iniciar", "En Proceso", "Terminado"]
 
     if steps.empty:
@@ -134,102 +137,97 @@ def modulo_programa_trabajo(client_id):
         conn.close()
         return
 
-    col_f1, col_f2 = st.columns([2, 1])
-    with col_f1:
-        search_query = st.text_input("🔍 Buscar:", placeholder="Procedimiento o código...")
-    with col_f2:
-        seccion_f = st.selectbox("📁 Filtrar Sección:", ["Todas"] + list(steps['section_name'].unique()))
+    # Filtros superiores
+    c_f1, c_f2 = st.columns([2, 1])
+    search = c_f1.text_input("🔍 Buscar por descripción o código:", "")
+    sec_options = ["Todas"] + sorted(list(steps['section_name'].unique()))
+    seccion_f = c_f2.selectbox("📁 Filtrar por Sección:", sec_options)
 
-    df_filtrado = steps.copy()
-    if search_query:
-        df_filtrado = df_filtrado[df_filtrado['description'].str.contains(search_query, case=False)]
+    df_f = steps.copy()
+    if search:
+        df_f = df_f[df_f['description'].str.contains(search, case=False) | df_f['step_code'].str.contains(search, case=False)]
     if seccion_f != "Todas":
-        df_filtrado = df_filtrado[df_filtrado['section_name'] == seccion_f]
+        df_f = df_f[df_f['section_name'] == seccion_f]
 
-    # Renderizado Jerárquico: ÁREA -> EXPANDER DE PASO
-    for area in df_filtrado['area_name'].unique():
-        st.markdown(f'<div class="area-label">📍 ÁREA: {area}</div>', unsafe_allow_html=True)
-        subset = df_filtrado[df_filtrado['area_name'] == area]
+    # Renderizado: ÁREA (Header) -> PASOS (Expanders)
+    for area in df_f['area_name'].unique():
+        st.markdown(f'<div class="area-header">📍 Área: {area}</div>', unsafe_allow_html=True)
+        subset_area = df_f[df_f['area_name'] == area]
         
-        for _, row in subset.iterrows():
+        for _, row in subset_area.iterrows():
             sid = row['id']
             status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
             
-            # PASO RESTAURADO CON EXPANDER
-            with st.expander(f"{status_icon} Paso {row['step_code']}: {row['description'][:90]}..."):
-                st.markdown(f"**Descripción Completa:** {row['description']}")
-                st.markdown(f'<div class="guia-box"><strong>Instrucciones:</strong> {row["instructions"]}</div>', unsafe_allow_html=True)
+            with st.expander(f"{status_icon} [{row['step_code']}] - {row['description'][:100]}..."):
+                st.markdown(f"**Procedimiento:** {row['description']}")
+                st.markdown(f'<div class="guia-box"><strong>Guía Técnica / Instrucciones:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
                 
-                n_nota = st.text_area("📝 Trabajo realizado / Conclusiones:", value=row['user_notes'] or "", key=f"nt_{sid}", height=150)
-                c_est, c_save = st.columns([1, 1])
-                n_est = c_est.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
-                if c_save.button("💾 Guardar Cambios", key=f"btn_{sid}", use_container_width=True):
+                n_nota = st.text_area("Conclusiones y evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=120)
+                col_e, col_b = st.columns([1, 1])
+                n_est = col_e.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
+                if col_b.button("💾 Actualizar Paso", key=f"btn_{sid}", use_container_width=True):
                     conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
                     conn.commit()
-                    st.toast(f"Paso {row['step_code']} actualizado")
+                    st.toast(f"Paso {row['step_code']} guardado.")
     conn.close()
 
 def modulo_importacion(client_id):
-    st.markdown("### 📥 Importar Pasos de Auditoría")
+    st.markdown("### 📥 Importar Pasos")
     
-    st.markdown("#### 1. Descargar Plantilla")
-    plantilla_ejemplo = {
-        'Seccion': ['Disponible', 'Disponible', 'Cuentas por Cobrar'],
-        'Area': ['Caja General', 'Bancos', 'Clientes Nacionales'],
-        'Codigo': ['DIS-01', 'DIS-02', 'CXC-01'],
-        'Descripcion': ['Realizar arqueo de caja física.', 'Conciliación bancaria mensual.', 'Circularización de saldos.'],
-        'Instrucciones': ['Verificar billetes y monedas.', 'Cotejar extracto vs libros.', 'Confirmar con el cliente externo.']
+    # Plantilla de ejemplo
+    st.markdown("#### 1. Obtener Plantilla")
+    p_data = {
+        'Seccion': ['Activo', 'Pasivo'],
+        'Area': ['Caja', 'Proveedores'],
+        'Codigo': ['101', '201'],
+        'Descripcion': ['Arqueo de caja', 'Confirmación de saldos'],
+        'Instrucciones': ['NIA 500', 'NIA 505']
     }
-    df_plantilla = pd.DataFrame(plantilla_ejemplo)
-    buffer = io.BytesIO()
-    df_plantilla.to_csv(buffer, index=False, encoding='utf-8-sig')
-    buffer.seek(0)
-    
-    st.download_button("⬇️ Descargar Plantilla (Excel/CSV)", data=buffer, file_name="plantilla_auditpro_pasos.csv", mime="text/csv")
+    df_p = pd.DataFrame(p_data)
+    csv_p = df_p.to_csv(index=False).encode('utf-8-sig')
+    st.download_button("⬇️ Descargar Formato CSV", data=csv_p, file_name="plantilla_auditpro.csv", mime="text/csv")
     
     st.divider()
-    st.markdown("#### 2. Subir Archivo Diligenciado")
-    up = st.file_uploader("Arrastre su archivo Excel o CSV aquí", type=['xlsx', 'csv'])
-    
+    st.markdown("#### 2. Subir Archivo")
+    up = st.file_uploader("Subir Excel o CSV", type=['xlsx', 'csv'])
     if up:
         try:
             df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
-            cols_req = ['Seccion', 'Area', 'Codigo', 'Descripcion', 'Instrucciones']
-            if not all(c in df.columns for c in cols_req):
-                st.error(f"⚠️ Columnas requeridas: {cols_req}")
-            else:
+            req = ['Seccion', 'Area', 'Codigo', 'Descripcion', 'Instrucciones']
+            if all(c in df.columns for c in req):
                 st.dataframe(df.head(3))
-                if st.button("🚀 Iniciar Importación con Validación de Duplicados"):
+                if st.button("🚀 Procesar e Importar"):
                     conn = get_db_connection(); cursor = conn.cursor()
                     existentes = pd.read_sql_query("SELECT section_name, area_name, step_code FROM audit_steps WHERE client_id=? AND is_deleted=0", conn, params=(client_id,))
                     set_ex = set(existentes['section_name'].astype(str) + "|" + existentes['area_name'].astype(str) + "|" + existentes['step_code'].astype(str))
                     
-                    nuevos = 0; duplicados = 0
+                    nuevos = 0
                     for _, r in df.iterrows():
                         clave = f"{r['Seccion']}|{r['Area']}|{r['Codigo']}"
                         if clave not in set_ex:
                             cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)",
                                            (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
-                            set_ex.add(clave); nuevos += 1
-                        else: duplicados += 1
+                            nuevos += 1
                     conn.commit(); conn.close()
-                    st.success(f"✅ Importados: {nuevos}. Duplicados omitidos: {duplicados}.")
+                    st.success(f"Se importaron {nuevos} pasos correctamente.")
+            else:
+                st.error(f"El archivo debe contener las columnas: {req}")
         except Exception as e:
             st.error(f"Error: {e}")
 
-# --- VISTAS DASHBOARD ---
+# --- VISTAS PRINCIPALES ---
 def vista_principal():
-    user_role = st.session_state.get('user_role', "Miembro")
-    is_admin = "Administrador" in user_role
+    is_admin = "Administrador" in st.session_state.get('user_role', "Miembro")
 
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user_name}")
-        st.markdown(f"<span class='admin-badge'>{user_role}</span>", unsafe_allow_html=True)
+        st.markdown(f"<span class='admin-badge'>{st.session_state.user_role}</span>", unsafe_allow_html=True)
         if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
-        st.subheader("Registrar Empresa")
-        n_name = st.text_input("Nombre"); n_nit = st.text_input("NIT")
-        if st.button("Registrar Cliente"):
+        st.subheader("Nueva Auditoría")
+        n_name = st.text_input("Nombre Empresa")
+        n_nit = st.text_input("NIT")
+        if st.button("Crear Cliente"):
             if n_name:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
@@ -237,7 +235,7 @@ def vista_principal():
                 conn.commit(); conn.close(); st.rerun()
 
     if 'active_id' in st.session_state:
-        if st.button("⬅️ Volver al Listado"): del st.session_state.active_id; st.rerun()
+        if st.button("⬅️ Volver al Panel"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
         
         m1, m2, m3 = st.columns(3)
@@ -249,7 +247,7 @@ def vista_principal():
         elif st.session_state.get('mod') == "Imp": modulo_importacion(st.session_state.active_id)
         else: modulo_materialidad(st.session_state.active_id)
     else:
-        st.title("💼 Dashboard AuditPro")
+        st.title("💼 Mis Auditorías")
         c1, c2 = st.columns(2)
         c1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
         c2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
@@ -266,22 +264,22 @@ def vista_principal():
                     st.rerun()
                 if is_admin:
                     with col3.popover("🗑️"):
-                        if st.button("Confirmar Borrado", key=f"del_{r['id']}"):
+                        if st.button("Confirmar", key=f"del_{r['id']}"):
                             conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
                             conn.commit(); st.rerun()
         conn.close()
 
 def vista_login():
     st.markdown('<div class="login-card"><h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
-    e = st.text_input("Correo"); p = st.text_input("Contraseña", type="password")
-    if st.button("Ingresar", use_container_width=True):
+    e = st.text_input("Usuario (Email)"); p = st.text_input("Clave", type="password")
+    if st.button("Acceder", use_container_width=True):
         conn = get_db_connection()
         u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hashlib.sha256(p.encode()).hexdigest())).fetchone()
         conn.close()
         if u:
             st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
             st.rerun()
-        else: st.error("Error de acceso")
+        else: st.error("Credenciales inválidas")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
