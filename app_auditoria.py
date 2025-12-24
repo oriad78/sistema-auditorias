@@ -64,10 +64,11 @@ def cargar_pasos_iniciales(conn, client_id):
         ("Aceptación/continuación", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor.")
     ]
     cursor = conn.cursor()
-    cursor.executemany(
-        "INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
-        [(client_id, p[0], p[1], p[2], p[3]) for p in pasos]
-    )
+    # Validación simple para pasos iniciales: Insertar solo si no existen
+    for p in pasos:
+        exist = cursor.execute("SELECT id FROM audit_steps WHERE client_id=? AND section_name=? AND step_code=?", (client_id, p[0], p[1])).fetchone()
+        if not exist:
+            cursor.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)", (client_id, p[0], p[1], p[2], p[3]))
     conn.commit()
 
 # --- MÓDULOS DE AUDITORÍA ---
@@ -106,7 +107,6 @@ def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo (Optimizado)")
     conn = get_db_connection()
     
-    # 1. CARGA DE DATOS - Usamos caché de Streamlit para no saturar el disco en cada renderizado
     query = """
         SELECT * FROM audit_steps 
         WHERE client_id=? AND is_deleted=0 
@@ -123,14 +123,12 @@ def modulo_programa_trabajo(client_id):
         conn.close()
         return
 
-    # 2. FILTROS Y BÚSQUEDA (Para manejar las 1000+ filas)
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
         search_query = st.text_input("🔍 Buscar en procedimientos (NIA 315/230):", placeholder="Ej: Riesgo, Control, Inventarios...")
     with col_f2:
         seccion_f = st.selectbox("📁 Filtrar por Sección:", ["Todas"] + list(steps['section_name'].unique()))
 
-    # Aplicar filtros antes de paginar
     df_filtrado = steps.copy()
     if search_query:
         df_filtrado = df_filtrado[df_filtrado['description'].str.contains(search_query, case=False) | 
@@ -138,7 +136,6 @@ def modulo_programa_trabajo(client_id):
     if seccion_f != "Todas":
         df_filtrado = df_filtrado[df_filtrado['section_name'] == seccion_f]
 
-    # 3. LÓGICA DE PAGINACIÓN (Evita el lag del navegador)
     items_por_pagina = 20
     total_pasos = len(df_filtrado)
     num_paginas = (total_pasos // items_por_pagina) + (1 if total_pasos % items_por_pagina > 0 else 0)
@@ -155,10 +152,8 @@ def modulo_programa_trabajo(client_id):
 
     st.write(f"Mostrando {len(subset_pasos)} de {total_pasos} procedimientos encontrados.")
 
-    # 4. RENDERIZADO CONTROLADO
     for _, row in subset_pasos.iterrows():
         sid = row['id']
-        # Indicador visual de estado en el título del expander
         status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
         label = f"{status_icon} Paso {row['step_code']}: {row['description'][:100]}..."
         
@@ -185,32 +180,28 @@ def modulo_programa_trabajo(client_id):
                     conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
                     conn.commit()
                     st.toast(f"Paso {row['step_code']} actualizado")
-                    # No usamos rerun total aquí para mantener la posición del scroll si es posible
     
     conn.close()
 
-# --- NUEVO MÓDULO: IMPORTACIÓN DE EXCEL/CSV ---
+# --- NUEVO MÓDULO: IMPORTACIÓN CON VALIDACIÓN ---
 def modulo_importacion(client_id):
-    st.markdown("### 📥 Importar Procedimientos (Excel/CSV)")
+    st.markdown("### 📥 Importar Procedimientos (Con Validación)")
     st.markdown("""
-        Cargue sus programas de auditoría estandarizados. 
-        El archivo **debe** tener las siguientes columnas exactas:
-        * `Seccion` (Ej: Efectivo, Ingresos)
-        * `Codigo` (Ej: 1105, 4100)
-        * `Descripcion` (El procedimiento a realizar)
-        * `Instrucciones` (Guía técnica para el auditor)
+        Cargue sus programas de auditoría. El sistema **validará automáticamente** si los códigos ya existen 
+        para evitar duplicados en la base de datos.
+        
+        **Columnas requeridas:** `Seccion`, `Codigo`, `Descripcion`, `Instrucciones`
     """)
 
-    # Botón para descargar plantilla
     plantilla_data = {
         'Seccion': ['Efectivo', 'Inventarios'],
         'Codigo': ['A-01', 'C-05'],
-        'Descripcion': ['Realizar arqueo de caja menor sorpresivo.', 'Participar en la toma física de inventarios.'],
-        'Instrucciones': ['Asegurar presencia del custodio NIA 501.', 'Verificar estado de la mercancía.']
+        'Descripcion': ['Arqueo de caja.', 'Toma física.'],
+        'Instrucciones': ['Verificar custodio.', 'Verificar estado.']
     }
     df_plantilla = pd.DataFrame(plantilla_data)
     csv = df_plantilla.to_csv(index=False).encode('utf-8')
-    st.download_button("⬇️ Descargar Plantilla Ejemplo (CSV)", data=csv, file_name="plantilla_auditpro.csv", mime="text/csv")
+    st.download_button("⬇️ Descargar Plantilla CSV", data=csv, file_name="plantilla_auditpro.csv", mime="text/csv")
 
     st.divider()
 
@@ -223,41 +214,68 @@ def modulo_importacion(client_id):
             else:
                 df = pd.read_excel(uploaded_file)
 
-            # Validación de columnas
             cols_requeridas = ['Seccion', 'Codigo', 'Descripcion', 'Instrucciones']
             if not all(col in df.columns for col in cols_requeridas):
-                st.error(f"⚠️ Error de Formato: Faltan columnas. El archivo debe tener: {', '.join(cols_requeridas)}")
+                st.error(f"⚠️ Error de Formato: Faltan columnas. Requerido: {', '.join(cols_requeridas)}")
             else:
-                st.success(f"Archivo leído correctamente. {len(df)} procedimientos encontrados.")
-                st.dataframe(df.head())
+                st.info(f"Archivo leído: {len(df)} filas encontradas. Haga clic abajo para procesar.")
+                st.dataframe(df.head(3))
 
-                if st.button("🚀 Importar a la Auditoría Actual"):
+                if st.button("🚀 Validar e Importar"):
                     conn = get_db_connection()
                     cursor = conn.cursor()
                     
-                    # Preparamos los datos para insertar
+                    # 1. Obtener códigos existentes para el cliente actual
+                    # Creamos una "clave compuesta" (Seccion + Codigo) para comparar
+                    existentes = pd.read_sql_query(
+                        "SELECT section_name, step_code FROM audit_steps WHERE client_id=? AND is_deleted=0",
+                        conn, params=(client_id,)
+                    )
+                    # Convertimos a string para asegurar comparación exacta
+                    set_claves_existentes = set(
+                        existentes['section_name'].astype(str).str.strip() + "|" + existentes['step_code'].astype(str).str.strip()
+                    )
+
                     datos_insertar = []
+                    duplicados_count = 0
+                    
                     for index, row in df.iterrows():
-                        datos_insertar.append((
-                            client_id,
-                            str(row['Seccion']),
-                            str(row['Codigo']),
-                            str(row['Descripcion']),
-                            str(row['Instrucciones'])
-                        ))
+                        seccion = str(row['Seccion']).strip()
+                        codigo = str(row['Codigo']).strip()
+                        clave_nueva = f"{seccion}|{codigo}"
+                        
+                        if clave_nueva in set_claves_existentes:
+                            duplicados_count += 1
+                        else:
+                            datos_insertar.append((
+                                client_id,
+                                seccion,
+                                codigo,
+                                str(row['Descripcion']),
+                                str(row['Instrucciones'])
+                            ))
+                            # Añadimos al set temporal para evitar duplicados dentro del mismo Excel
+                            set_claves_existentes.add(clave_nueva)
                     
-                    cursor.executemany("""
-                        INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) 
-                        VALUES (?, ?, ?, ?, ?)
-                    """, datos_insertar)
+                    if datos_insertar:
+                        cursor.executemany("""
+                            INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) 
+                            VALUES (?, ?, ?, ?, ?)
+                        """, datos_insertar)
+                        conn.commit()
+                        
+                        st.balloons()
+                        msg_exito = f"✅ Éxito: Se importaron {len(datos_insertar)} procedimientos nuevos."
+                        if duplicados_count > 0:
+                            msg_exito += f" (Se omitieron {duplicados_count} duplicados detectados)."
+                        st.success(msg_exito)
+                    else:
+                        st.warning(f"⚠️ No se importó nada: Los {duplicados_count} registros del archivo ya existen en la base de datos.")
                     
-                    conn.commit()
                     conn.close()
-                    st.balloons()
-                    st.success("✅ ¡Importación exitosa! Puede ir al 'Programa de Trabajo' para ver los nuevos pasos.")
 
         except Exception as e:
-            st.error(f"Ocurrió un error al leer el archivo: {e}")
+            st.error(f"Ocurrió un error al procesar el archivo: {e}")
 
 # --- VISTAS PRINCIPALES ---
 def vista_principal():
@@ -283,13 +301,11 @@ def vista_principal():
         if st.button("⬅️ Volver al Listado"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
         
-        # MENÚ DE MÓDULOS (Modificado para incluir Importación)
         m1, m2, m3 = st.columns(3)
         if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
         if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.mod = "Prog"
         if m3.button("📥 Importar Pasos", use_container_width=True): st.session_state.mod = "Imp"
         
-        # ROUTER DE VISTAS
         if st.session_state.get('mod') == "Prog":
             modulo_programa_trabajo(st.session_state.active_id)
         elif st.session_state.get('mod') == "Imp":
