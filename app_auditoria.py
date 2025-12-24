@@ -47,14 +47,20 @@ def create_tables():
 
 create_tables()
 
-# --- HELPERS ---
+# --- HELPERS: CARGA DE PASOS (Actualizado con Administración del Proyecto) ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
-        ("Aceptación/continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
-        ("Aceptación/continuación", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere una revisión de control de calidad del trabajo según la complejidad del cliente."),
-        ("Aceptación/continuación", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar la independencia de todo el equipo y verificar que no existan conflictos de interés."),
-        ("Aceptación/continuación", "5000", "(ISA 210, 300) Carta de contratación", "Verificar que la carta de encargo esté firmada por el representante legal y cubra los periodos actuales."),
-        ("Aceptación/continuación", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor.")
+        # SECCIÓN 1: Aceptación/continuación
+        ("1. Aceptación/continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación del cliente", "Realice una evaluación de riesgos del cliente. Considere la integridad de los propietarios y la capacidad del equipo para realizar el trabajo."),
+        ("1. Aceptación/continuación", "2000", "(ISA 220) Considerar la necesidad de designar a un QRP", "Evaluar si el compromiso requiere una revisión de control de calidad del trabajo según la complejidad del cliente."),
+        ("1. Aceptación/continuación", "4000", "(ISA 200, 220, 300) Cumplimiento de requisitos éticos", "Documentar la independencia de todo el equipo y verificar que no existan conflictos de interés."),
+        ("1. Aceptación/continuación", "5000", "(ISA 210, 300) Carta de contratación", "Verificar que la carta de encargo esté firmada por el representante legal y cubra los periodos actuales."),
+        ("1. Aceptación/continuación", "6000", "(ISA 510) Contacto con auditores anteriores", "En caso de ser primera auditoría, documentar la comunicación con el auditor predecesor."),
+        
+        # SECCIÓN 2: Administración del proyecto (NUEVOS PASOS)
+        ("2. Administración del proyecto", "1000", "(ISA 300) Movilizar al equipo de trabajo", "Organizar la logística inicial, asignar roles específicos a los miembros del equipo y programar la reunión de inicio (kick-off)."),
+        ("2. Administración del proyecto", "2000", "Discutir y acordar objetivos de desarrollo personal", "Establecer las metas de aprendizaje y desempeño para cada miembro del equipo durante el encargo."),
+        ("2. Administración del proyecto", "3000", "(ISA 300) Preparar y monitorear el avance con relación al plan del proyecto", "Actualizar el cronograma de auditoría y verificar que los hitos se estén cumpliendo según lo planeado en la estrategia general.")
     ]
     cursor = conn.cursor()
     cursor.executemany("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?)",
@@ -94,7 +100,9 @@ def modulo_programa_trabajo(client_id):
     conn = get_db_connection()
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
     if steps.empty:
-        st.info("No hay pasos cargados."); st.button("Generar Pasos Iniciales", on_click=cargar_pasos_iniciales, args=(conn, client_id))
+        st.info("No hay pasos cargados.")
+        if st.button("Generar Pasos Iniciales"):
+            cargar_pasos_iniciales(conn, client_id); st.rerun()
     else:
         for seccion in steps['section_name'].unique():
             st.subheader(f"📁 {seccion}")
