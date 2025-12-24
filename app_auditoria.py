@@ -138,6 +138,7 @@ def modulo_programa_trabajo(client_id):
     if seccion_f != "Todas":
         df_filtrado = df_filtrado[df_filtrado['section_name'] == seccion_f]
 
+    # Agrupación por ÁREAS con Expander
     for area in df_filtrado['area_name'].unique():
         with st.expander(f"📍 ÁREA: {area}", expanded=True):
             subset = df_filtrado[df_filtrado['area_name'] == area]
@@ -157,39 +158,81 @@ def modulo_programa_trabajo(client_id):
     conn.close()
 
 def modulo_importacion(client_id):
-    st.markdown("### 📥 Importar Pasos")
-    st.markdown("Cargue sus programas de auditoría. El archivo debe tener: **Seccion, Area, Codigo, Descripcion, Instrucciones**")
+    st.markdown("### 📥 Importar Pasos de Auditoría")
     
-    # --- RESTAURACIÓN DEL TEMPLATE ---
-    plantilla_data = {
-        'Seccion': ['Activo', 'Pasivo'],
-        'Area': ['Caja y Bancos', 'Proveedores'],
-        'Codigo': ['A1-01', 'P1-01'],
-        'Descripcion': ['Realizar arqueo de caja.', 'Circularizar saldos.'],
-        'Instrucciones': ['Siga NIA 500.', 'Siga NIA 505.']
+    # --- CREACIÓN DE LA PLANTILLA DINÁMICA ---
+    st.markdown("#### 1. Descargar Plantilla")
+    st.write("Utilice este archivo como base para cargar sus procedimientos masivamente.")
+    
+    plantilla_ejemplo = {
+        'Seccion': ['Disponible', 'Disponible', 'Cuentas por Cobrar'],
+        'Area': ['Caja General', 'Bancos', 'Clientes Nacionales'],
+        'Codigo': ['DIS-01', 'DIS-02', 'CXC-01'],
+        'Descripcion': ['Realizar arqueo de caja física.', 'Conciliación bancaria mensual.', 'Circularización de saldos.'],
+        'Instrucciones': ['Verificar billetes y monedas.', 'Cotejar extracto vs libros.', 'Confirmar con el cliente externo.']
     }
-    df_plantilla = pd.DataFrame(plantilla_data)
-    csv = df_plantilla.to_csv(index=False).encode('utf-8')
-    st.download_button("⬇️ Descargar Plantilla Excel (CSV)", data=csv, file_name="plantilla_pasos.csv", mime="text/csv")
+    df_plantilla = pd.DataFrame(plantilla_ejemplo)
+    
+    # Conversión a CSV para descarga
+    buffer = io.BytesIO()
+    df_plantilla.to_csv(buffer, index=False, encoding='utf-8-sig')
+    buffer.seek(0)
+    
+    st.download_button(
+        label="⬇️ Descargar Plantilla (Excel/CSV)",
+        data=buffer,
+        file_name="plantilla_auditpro_pasos.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
     
     st.divider()
-    up = st.file_uploader("Subir CSV/Excel", type=['xlsx', 'csv'])
+    
+    # --- CARGA DE ARCHIVOS ---
+    st.markdown("#### 2. Subir Archivo Diligenciado")
+    up = st.file_uploader("Arrastre su archivo Excel o CSV aquí", type=['xlsx', 'csv'])
+    
     if up:
-        df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
-        if st.button("🚀 Procesar Importación"):
-            conn = get_db_connection(); cursor = conn.cursor()
-            existentes = pd.read_sql_query("SELECT section_name, area_name, step_code FROM audit_steps WHERE client_id=?", conn, params=(client_id,))
-            set_ex = set(existentes['section_name'].astype(str) + "|" + existentes['area_name'].astype(str) + "|" + existentes['step_code'].astype(str))
+        try:
+            df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
             
-            nuevos = 0
-            for _, r in df.iterrows():
-                clave = f"{r['Seccion']}|{r['Area']}|{r['Codigo']}"
-                if clave not in set_ex:
-                    cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)",
-                                   (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
-                    nuevos += 1
-            conn.commit(); conn.close()
-            st.success(f"Importados {nuevos} registros nuevos.")
+            # Validación de Columnas
+            cols_req = ['Seccion', 'Area', 'Codigo', 'Descripcion', 'Instrucciones']
+            if not all(c in df.columns for c in cols_req):
+                st.error(f"⚠️ El archivo no tiene las columnas correctas. Requerido: {cols_req}")
+            else:
+                st.success(f"Archivo detectado: {len(df)} registros listos para validar.")
+                st.dataframe(df.head(5)) # Vista previa
+
+                if st.button("🚀 Iniciar Importación con Validación de Duplicados"):
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    
+                    # Cargar existentes para evitar duplicados
+                    existentes = pd.read_sql_query("SELECT section_name, area_name, step_code FROM audit_steps WHERE client_id=? AND is_deleted=0", conn, params=(client_id,))
+                    set_ex = set(existentes['section_name'].astype(str) + "|" + existentes['area_name'].astype(str) + "|" + existentes['step_code'].astype(str))
+                    
+                    nuevos = 0
+                    duplicados = 0
+                    
+                    for _, r in df.iterrows():
+                        clave = f"{r['Seccion']}|{r['Area']}|{r['Codigo']}"
+                        if clave not in set_ex:
+                            cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)",
+                                           (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
+                            set_ex.add(clave)
+                            nuevos += 1
+                        else:
+                            duplicados += 1
+                    
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ Proceso finalizado: {nuevos} nuevos registros importados.")
+                    if duplicados > 0:
+                        st.warning(f"ℹ️ Se omitieron {duplicados} registros que ya existían en esta empresa.")
+        
+        except Exception as e:
+            st.error(f"Error al leer el archivo: {e}")
 
 # --- VISTAS DASHBOARD ---
 def vista_principal():
