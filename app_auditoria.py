@@ -63,7 +63,7 @@ def validar_password(p, p_confirm):
     if not p or not p_confirm:
         return False, "Debe completar ambos campos de contraseña."
     if p != p_confirm:
-        return False, "Las contraseñas no coinciden. Por favor, verifíquelas."
+        return False, "Las contraseñas NO coinciden. Inténtelo de nuevo."
     if len(p) < 8:
         return False, "La contraseña debe tener al menos 8 caracteres."
     if not re.search("[a-z]", p) or not re.search("[0-9]", p):
@@ -203,13 +203,16 @@ def vista_login():
     with tabs[1]:
         new_name = st.text_input("Nombre Completo")
         new_email = st.text_input("Email de registro", key="r_email").lower().strip()
-        # --- CAMPOS DOBLES DE CONTRASEÑA ---
-        new_pass = st.text_input("Crear Contraseña", type="password", help="Mínimo 8 caracteres, letras y números.")
-        new_pass_confirm = st.text_input("Confirmar Contraseña", type="password", key="reg_pass_conf")
-        # -----------------------------------
+        
+        # --- CAMPOS DE CONTRASEÑA DUPLICADOS ---
+        new_pass = st.text_input("Crear Contraseña", type="password", key="reg_p1", help="Mínimo 8 caracteres, letras y números.")
+        new_pass_confirm = st.text_input("Confirmar Contraseña", type="password", key="reg_p2")
+        # ---------------------------------------
+        
         new_role = st.selectbox("Rol en el equipo", ["Miembro", "Administrador"])
         
         if st.button("Crear Cuenta", use_container_width=True):
+            # Validación de coincidencia y fortaleza
             es_valida, mensaje = validar_password(new_pass, new_pass_confirm)
             if not es_valida:
                 st.warning(mensaje)
@@ -219,33 +222,35 @@ def vista_login():
                     conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)",
                                  (new_email, new_name, hash_pass(new_pass), new_role))
                     conn.commit(); conn.close()
-                    st.success("¡Cuenta creada con éxito!")
-                except: st.error("Este correo ya existe.")
-            else: st.error("Por favor llene todos los campos.")
+                    st.success("¡Cuenta creada! Ya puede ingresar.")
+                except: st.error("Este correo ya está registrado.")
+            else: st.error("Todos los campos son obligatorios.")
 
     with tabs[2]:
-        st.subheader("Recuperación")
+        st.subheader("Recuperación de Acceso")
         re_email = st.text_input("Email registrado", key="rec_email").lower().strip()
-        re_name = st.text_input("Nombre completo registrado")
-        # --- CAMPOS DOBLES PARA RECUPERACIÓN ---
-        new_pass_re = st.text_input("Nueva Contraseña", type="password", key="rec_p1")
-        new_pass_re_confirm = st.text_input("Confirmar Nueva Contraseña", type="password", key="rec_p2")
-        # ---------------------------------------
-        if st.button("Actualizar Contraseña", use_container_width=True):
-            es_valida, mensaje = validar_password(new_pass_re, new_pass_re_confirm)
+        re_name = st.text_input("Nombre completo exacto")
+        
+        # --- CAMPOS DE CONTRASEÑA DUPLICADOS PARA RECUPERACIÓN ---
+        new_p_rec = st.text_input("Nueva Contraseña", type="password", key="rec_p1")
+        new_p_rec_conf = st.text_input("Confirmar Nueva Contraseña", type="password", key="rec_p2")
+        # ---------------------------------------------------------
+        
+        if st.button("Actualizar Credenciales", use_container_width=True):
+            es_valida, mensaje = validar_password(new_p_rec, new_p_rec_conf)
             if es_valida:
                 conn = get_db_connection()
                 user = conn.execute("SELECT id FROM users WHERE email=? AND full_name=?", (re_email, re_name)).fetchone()
                 if user:
-                    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(new_pass_re), user[0]))
+                    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(new_p_rec), user[0]))
                     conn.commit(); conn.close()
-                    st.success("Contraseña actualizada.")
-                else: st.error("Los datos no coinciden.")
+                    st.success("Contraseña actualizada con éxito.")
+                else: st.error("Los datos proporcionados no coinciden.")
             else: st.warning(mensaje)
             
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- VISTA PRINCIPAL ---
+# --- VISTA PRINCIPAL (Dashboard y Clientes) ---
 def vista_principal():
     user_role = st.session_state.get('user_role', "Miembro")
     is_admin = "Administrador" in user_role
@@ -256,7 +261,7 @@ def vista_principal():
         if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
         st.subheader("Nueva Empresa")
-        n_name = st.text_input("Nombre"); n_nit = st.text_input("NIT")
+        n_name = st.text_input("Nombre Cliente"); n_nit = st.text_input("NIT")
         if st.button("Registrar Cliente"):
             if n_name:
                 conn = get_db_connection(); cur = conn.cursor()
@@ -265,12 +270,12 @@ def vista_principal():
                 conn.commit(); conn.close(); st.rerun()
 
     if 'active_id' in st.session_state:
-        if st.button("⬅️ Volver"): del st.session_state.active_id; st.rerun()
+        if st.button("⬅️ Volver al Listado"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
         m1, m2, m3 = st.columns(3)
         if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
-        if m2.button("📝 Programa", use_container_width=True): st.session_state.mod = "Prog"
-        if m3.button("📥 Importar", use_container_width=True): st.session_state.mod = "Imp"
+        if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.mod = "Prog"
+        if m3.button("📥 Importar Pasos", use_container_width=True): st.session_state.mod = "Imp"
         
         if st.session_state.get('mod') == "Prog": modulo_programa_trabajo(st.session_state.active_id)
         elif st.session_state.get('mod') == "Imp": modulo_importacion(st.session_state.active_id)
@@ -283,7 +288,7 @@ def vista_principal():
             with st.container(border=True):
                 col1, col2, col3 = st.columns([4, 1.5, 0.5])
                 col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
-                if col2.button("Abrir", key=f"op_{r['id']}"):
+                if col2.button("Abrir Auditoría", key=f"op_{r['id']}"):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
                     st.session_state.mod = "Mat"; st.rerun()
                 if is_admin:
