@@ -48,7 +48,7 @@ def create_tables():
 
 create_tables()
 
-# --- SEGURIDAD ---
+# --- FUNCIONES DE SEGURIDAD ---
 def hash_pass(p): 
     return hashlib.sha256(p.encode()).hexdigest()
 
@@ -56,7 +56,7 @@ def validar_password(p, p_confirm):
     if not p or not p_confirm:
         return False, "Debe completar ambos campos de contraseña."
     if p != p_confirm:
-        return False, "Las contraseñas NO coinciden."
+        return False, "Las contraseñas NO coinciden. Verifíquelas e intente de nuevo."
     if len(p) < 8 or not re.search("[a-z]", p) or not re.search("[0-9]", p):
         return False, "La contraseña debe tener al menos 8 caracteres, incluyendo letras y números."
     return True, ""
@@ -75,7 +75,7 @@ def cargar_pasos_iniciales(conn, client_id):
                        [(client_id, p[0], p[1], p[2], p[3]) for p in pasos])
     conn.commit()
 
-# --- MÓDULOS ---
+# --- MÓDULOS TÉCNICOS ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad (NIA 320)")
     conn = get_db_connection()
@@ -95,7 +95,9 @@ def modulo_materialidad(client_id):
         with c3:
             p_ranr = st.slider("% RANR", 0.0, 10.0, datos[7] if datos else 5.0)
         
-        m_gen, m_perf, m_ranr = valor_base*(p_gen/100), valor_base*(p_gen/100)*(p_perf/100), valor_base*(p_gen/100)*(p_ranr/100)
+        m_gen = valor_base * (p_gen / 100)
+        m_perf = m_gen * (p_perf / 100)
+        m_ranr = m_gen * (p_ranr / 100)
     
     st.columns(3)[0].metric("Mat. General", f"$ {m_gen:,.2f}")
     if st.button("💾 Guardar Materialidad"):
@@ -120,14 +122,14 @@ def modulo_programa_trabajo(client_id):
                 conn.commit(); st.toast("Actualizado")
     conn.close()
 
-# --- VISTAS LOGIN ---
+# --- VISTAS DE AUTENTICACIÓN ---
 def vista_login():
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.markdown('<h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
     t1, t2, t3 = st.tabs(["Ingresar", "Registrarse", "Recuperar"])
     with t1:
         e = st.text_input("Email", key="l1").lower().strip()
-        p = st.text_input("Clave", type="password", key="l2")
+        p = st.text_input("Contraseña", type="password", key="l2")
         if st.button("Entrar", use_container_width=True):
             conn = get_db_connection()
             u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
@@ -135,29 +137,34 @@ def vista_login():
             if u: st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]; st.rerun()
             else: st.error("Error de acceso.")
     with t2:
-        n = st.text_input("Nombre")
+        n = st.text_input("Nombre Completo")
         em = st.text_input("Email", key="r1").lower().strip()
-        p1 = st.text_input("Contraseña", type="password", key="r2")
+        p1 = st.text_input("Crear Contraseña", type="password", key="r2")
         p2 = st.text_input("Confirmar Contraseña", type="password", key="r3")
         r = st.selectbox("Rol", ["Miembro", "Administrador"])
         if st.button("Crear Cuenta", use_container_width=True):
             v, msg = validar_password(p1, p2)
             if v and n and em:
                 try:
-                    conn = get_db_connection(); conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (em, n, hash_pass(p1), r)); conn.commit(); conn.close(); st.success("Creado.")
-                except: st.error("Email ya existe.")
+                    conn = get_db_connection()
+                    conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (em, n, hash_pass(p1), r))
+                    conn.commit(); conn.close(); st.success("Cuenta creada con éxito.")
+                except: st.error("El email ya está registrado.")
             else: st.warning(msg if not v else "Llene todos los campos.")
     with t3:
         em_rec = st.text_input("Email", key="rc1").lower().strip()
         nom_rec = st.text_input("Nombre Completo")
         p1_rec = st.text_input("Nueva Clave", type="password", key="rc2")
         p2_rec = st.text_input("Confirmar Nueva Clave", type="password", key="rc3")
-        if st.button("Actualizar", use_container_width=True):
+        if st.button("Actualizar Contraseña", use_container_width=True):
             v, msg = validar_password(p1_rec, p2_rec)
             if v:
-                conn = get_db_connection(); u = conn.execute("SELECT id FROM users WHERE email=? AND full_name=?", (em_rec, nom_rec)).fetchone()
-                if u: conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(p1_rec), u[0])); conn.commit(); st.success("Actualizado.")
-                else: st.error("Datos no coinciden.")
+                conn = get_db_connection()
+                u = conn.execute("SELECT id FROM users WHERE email=? AND full_name=?", (em_rec, nom_rec)).fetchone()
+                if u:
+                    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(p1_rec), u[0]))
+                    conn.commit(); st.success("Contraseña actualizada.")
+                else: st.error("Los datos no coinciden.")
             else: st.warning(msg)
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -165,16 +172,15 @@ def vista_login():
 def vista_principal():
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user_name} ({st.session_state.user_role})")
-        if st.button("Salir"): st.session_state.clear(); st.rerun()
+        if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
-        # --- LINKS RUES Y DIAN RESTAURADOS ---
         st.markdown("### 🔗 Consultas Externas")
-        st.markdown("[🔍 Consultar RUES](https://www.rues.org.co/)", unsafe_allow_html=True)
+        # --- LINK RUES ACTUALIZADO ---
+        st.markdown("[🔍 Consultar RUES (Directo)](https://www.rues.org.co/Consultas/ConsultasRegistros)", unsafe_allow_html=True)
         st.markdown("[📑 Consultar RUT (DIAN)](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRUT.faces)", unsafe_allow_html=True)
         st.divider()
-        # -------------------------------------
         st.subheader("Nueva Empresa")
-        n, nit = st.text_input("Nombre"), st.text_input("NIT")
+        n, nit = st.text_input("Nombre Cliente"), st.text_input("NIT")
         if st.button("Registrar"):
             if n:
                 conn = get_db_connection(); cur = conn.cursor()
