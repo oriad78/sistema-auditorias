@@ -151,4 +151,55 @@ def vista_login():
         em_rec = st.text_input("Email", key="rc1").lower().strip()
         nom_rec = st.text_input("Nombre Completo")
         p1_rec = st.text_input("Nueva Clave", type="password", key="rc2")
-        p2
+        p2_rec = st.text_input("Confirmar Nueva Clave", type="password", key="rc3")
+        if st.button("Actualizar", use_container_width=True):
+            v, msg = validar_password(p1_rec, p2_rec)
+            if v:
+                conn = get_db_connection(); u = conn.execute("SELECT id FROM users WHERE email=? AND full_name=?", (em_rec, nom_rec)).fetchone()
+                if u: conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(p1_rec), u[0])); conn.commit(); st.success("Actualizado.")
+                else: st.error("Datos no coinciden.")
+            else: st.warning(msg)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# --- VISTA PRINCIPAL ---
+def vista_principal():
+    with st.sidebar:
+        st.markdown(f"### 👤 {st.session_state.user_name} ({st.session_state.user_role})")
+        if st.button("Salir"): st.session_state.clear(); st.rerun()
+        st.divider()
+        # --- LINKS RUES Y DIAN RESTAURADOS ---
+        st.markdown("### 🔗 Consultas Externas")
+        st.markdown("[🔍 Consultar RUES](https://www.rues.org.co/)", unsafe_allow_html=True)
+        st.markdown("[📑 Consultar RUT (DIAN)](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRUT.faces)", unsafe_allow_html=True)
+        st.divider()
+        # -------------------------------------
+        st.subheader("Nueva Empresa")
+        n, nit = st.text_input("Nombre"), st.text_input("NIT")
+        if st.button("Registrar"):
+            if n:
+                conn = get_db_connection(); cur = conn.cursor()
+                cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n, nit))
+                cargar_pasos_iniciales(conn, cur.lastrowid); conn.commit(); conn.close(); st.rerun()
+
+    if 'active_id' in st.session_state:
+        if st.button("⬅️ Volver"): del st.session_state.active_id; st.rerun()
+        st.title(f"📂 {st.session_state.active_name}")
+        c1, c2 = st.columns(2)
+        if c1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
+        if c2.button("📝 Programa", use_container_width=True): st.session_state.mod = "Prog"
+        if st.session_state.get('mod') == "Prog": modulo_programa_trabajo(st.session_state.active_id)
+        else: modulo_materialidad(st.session_state.active_id)
+    else:
+        st.title("💼 Dashboard AuditPro")
+        conn = get_db_connection(); clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
+        for _, r in clients.iterrows():
+            with st.container(border=True):
+                col1, col2 = st.columns([5, 1])
+                col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
+                if col2.button("Abrir", key=f"o_{r['id']}"):
+                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
+        conn.close()
+
+if __name__ == "__main__":
+    if 'user_id' not in st.session_state: vista_login()
+    else: vista_principal()
