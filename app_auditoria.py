@@ -60,8 +60,10 @@ def hash_pass(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
 def validar_password(p, p_confirm):
+    if not p or not p_confirm:
+        return False, "Debe completar ambos campos de contraseña."
     if p != p_confirm:
-        return False, "Las contraseñas no coinciden."
+        return False, "Las contraseñas no coinciden. Por favor, verifíquelas."
     if len(p) < 8:
         return False, "La contraseña debe tener al menos 8 caracteres."
     if not re.search("[a-z]", p) or not re.search("[0-9]", p):
@@ -84,7 +86,7 @@ def cargar_pasos_iniciales(conn, client_id):
     )
     conn.commit()
 
-# --- MÓDULOS DE AUDITORÍA ---
+# --- MÓDULOS TÉCNICOS ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad (NIA 320)")
     conn = get_db_connection()
@@ -133,9 +135,9 @@ def modulo_programa_trabajo(client_id):
 
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
-        search_query = st.text_input("🔍 Buscar en procedimientos:", placeholder="Ej: Riesgo...")
+        search_query = st.text_input("🔍 Buscar:", placeholder="Ej: Riesgo...")
     with col_f2:
-        seccion_f = st.selectbox("📁 Filtrar por Sección:", ["Todas"] + list(steps['section_name'].unique()))
+        seccion_f = st.selectbox("📁 Sección:", ["Todas"] + list(steps['section_name'].unique()))
 
     df_filtrado = steps.copy()
     if search_query:
@@ -146,7 +148,6 @@ def modulo_programa_trabajo(client_id):
     items_por_pagina = 20
     total_pasos = len(df_filtrado)
     num_paginas = (total_pasos // items_por_pagina) + (1 if total_pasos % items_por_pagina > 0 else 0)
-    
     pagina_actual = st.number_input(f"Página (de {num_paginas})", min_value=1, max_value=num_paginas, step=1) if num_paginas > 1 else 1
 
     inicio = (pagina_actual - 1) * items_por_pagina
@@ -162,25 +163,137 @@ def modulo_programa_trabajo(client_id):
             if st.button("💾 Guardar", key=f"btn_{sid}"):
                 conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
                 conn.commit()
-                st.toast("Actualizado")
+                st.toast("Guardado")
     conn.close()
 
 def modulo_importacion(client_id):
     st.markdown("### 📥 Importar Procedimientos")
-    uploaded_file = st.file_uploader("Archivo Excel/CSV", type=['xlsx', 'csv'])
+    uploaded_file = st.file_uploader("Excel/CSV", type=['xlsx', 'csv'])
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-            if st.button("🚀 Confirmar Importación"):
+            if st.button("🚀 Importar"):
                 conn = get_db_connection()
                 for _, r in df.iterrows():
                     conn.execute("INSERT INTO audit_steps (client_id, section_name, step_code, description, instructions) VALUES (?,?,?,?,?)",
                                  (client_id, str(r['Seccion']), str(r['Codigo']), str(r['Descripcion']), str(r['Instrucciones'])))
                 conn.commit(); conn.close()
-                st.success("Importado con éxito.")
+                st.success("Éxito.")
         except Exception as e: st.error(f"Error: {e}")
 
 # --- VISTAS DE AUTENTICACIÓN ---
 def vista_login():
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.markdown('<h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
+    
+    tabs = st.tabs(["Ingresar", "Registrarse", "Recuperar Acceso"])
+    
+    with tabs[0]:
+        e = st.text_input("Correo electrónico", key="l_email").lower().strip()
+        p = st.text_input("Contraseña", type="password", key="l_pass")
+        if st.button("Entrar", use_container_width=True):
+            conn = get_db_connection()
+            u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
+            conn.close()
+            if u:
+                st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
+                st.rerun()
+            else: st.error("Credenciales incorrectas.")
+
+    with tabs[1]:
+        new_name = st.text_input("Nombre Completo")
+        new_email = st.text_input("Email de registro", key="r_email").lower().strip()
+        # --- CAMPOS DOBLES DE CONTRASEÑA ---
+        new_pass = st.text_input("Crear Contraseña", type="password", help="Mínimo 8 caracteres, letras y números.")
+        new_pass_confirm = st.text_input("Confirmar Contraseña", type="password", key="reg_pass_conf")
+        # -----------------------------------
+        new_role = st.selectbox("Rol en el equipo", ["Miembro", "Administrador"])
+        
+        if st.button("Crear Cuenta", use_container_width=True):
+            es_valida, mensaje = validar_password(new_pass, new_pass_confirm)
+            if not es_valida:
+                st.warning(mensaje)
+            elif new_name and new_email:
+                try:
+                    conn = get_db_connection()
+                    conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)",
+                                 (new_email, new_name, hash_pass(new_pass), new_role))
+                    conn.commit(); conn.close()
+                    st.success("¡Cuenta creada con éxito!")
+                except: st.error("Este correo ya existe.")
+            else: st.error("Por favor llene todos los campos.")
+
+    with tabs[2]:
+        st.subheader("Recuperación")
+        re_email = st.text_input("Email registrado", key="rec_email").lower().strip()
+        re_name = st.text_input("Nombre completo registrado")
+        # --- CAMPOS DOBLES PARA RECUPERACIÓN ---
+        new_pass_re = st.text_input("Nueva Contraseña", type="password", key="rec_p1")
+        new_pass_re_confirm = st.text_input("Confirmar Nueva Contraseña", type="password", key="rec_p2")
+        # ---------------------------------------
+        if st.button("Actualizar Contraseña", use_container_width=True):
+            es_valida, mensaje = validar_password(new_pass_re, new_pass_re_confirm)
+            if es_valida:
+                conn = get_db_connection()
+                user = conn.execute("SELECT id FROM users WHERE email=? AND full_name=?", (re_email, re_name)).fetchone()
+                if user:
+                    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(new_pass_re), user[0]))
+                    conn.commit(); conn.close()
+                    st.success("Contraseña actualizada.")
+                else: st.error("Los datos no coinciden.")
+            else: st.warning(mensaje)
+            
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# --- VISTA PRINCIPAL ---
+def vista_principal():
+    user_role = st.session_state.get('user_role', "Miembro")
+    is_admin = "Administrador" in user_role
+
+    with st.sidebar:
+        st.markdown(f"### 👤 {st.session_state.user_name}")
+        st.markdown(f"<span class='admin-badge'>{user_role}</span>", unsafe_allow_html=True)
+        if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
+        st.divider()
+        st.subheader("Nueva Empresa")
+        n_name = st.text_input("Nombre"); n_nit = st.text_input("NIT")
+        if st.button("Registrar Cliente"):
+            if n_name:
+                conn = get_db_connection(); cur = conn.cursor()
+                cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
+                cargar_pasos_iniciales(conn, cur.lastrowid)
+                conn.commit(); conn.close(); st.rerun()
+
+    if 'active_id' in st.session_state:
+        if st.button("⬅️ Volver"): del st.session_state.active_id; st.rerun()
+        st.title(f"📂 {st.session_state.active_name}")
+        m1, m2, m3 = st.columns(3)
+        if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
+        if m2.button("📝 Programa", use_container_width=True): st.session_state.mod = "Prog"
+        if m3.button("📥 Importar", use_container_width=True): st.session_state.mod = "Imp"
+        
+        if st.session_state.get('mod') == "Prog": modulo_programa_trabajo(st.session_state.active_id)
+        elif st.session_state.get('mod') == "Imp": modulo_importacion(st.session_state.active_id)
+        else: modulo_materialidad(st.session_state.active_id)
+    else:
+        st.title("💼 Dashboard AuditPro")
+        conn = get_db_connection()
+        clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
+        for _, r in clients.iterrows():
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([4, 1.5, 0.5])
+                col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
+                if col2.button("Abrir", key=f"op_{r['id']}"):
+                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
+                    st.session_state.mod = "Mat"; st.rerun()
+                if is_admin:
+                    if col3.button("🗑️", key=f"del_{r['id']}"):
+                        conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
+                        conn.commit(); st.rerun()
+        conn.close()
+
+if __name__ == "__main__":
+    if 'user_id' not in st.session_state:
+        vista_login()
+    else:
+        vista_principal()
