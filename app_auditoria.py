@@ -78,7 +78,7 @@ def create_tables():
     conn.commit()
     conn.close()
 
-# --- NUEVO: SCRIPT DE INICIALIZACIÓN (CREAR ADMIN) ---
+# --- SCRIPT DE INICIALIZACIÓN (CREAR ADMIN) ---
 def crear_admin_por_defecto():
     """Crea un usuario administrador si no existe ninguno."""
     conn = get_db_connection()
@@ -87,7 +87,6 @@ def crear_admin_por_defecto():
     cursor.execute("SELECT * FROM users WHERE email='admin@auditpro.com'")
     if not cursor.fetchone():
         # Si no existe, lo creamos
-        # La contraseña será: admin123
         pass_hash = hashlib.sha256('admin123'.encode()).hexdigest()
         cursor.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?, ?, ?, ?)",
                        ('admin@auditpro.com', 'Administrador Principal', pass_hash, 'Administrador'))
@@ -286,15 +285,24 @@ def vista_principal():
 
 def vista_login():
     st.markdown('<div class="login-card"><h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
-    e = st.text_input("Usuario (Email)"); p = st.text_input("Clave", type="password")
+    e = st.text_input("Usuario (Email)")
+    p = st.text_input("Clave", type="password")
+    
     if st.button("Acceder", use_container_width=True):
+        # LIMPIEZA AUTOMÁTICA DE ESPACIOS Y MAYÚSCULAS
+        email_clean = e.strip().lower() 
+        pass_clean = p.strip()
+        
         conn = get_db_connection()
-        u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hashlib.sha256(p.encode()).hexdigest())).fetchone()
+        u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", 
+                        (email_clean, hashlib.sha256(pass_clean.encode()).hexdigest())).fetchone()
         conn.close()
+        
         if u:
             st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
             st.rerun()
-        else: st.error("Credenciales inválidas")
+        else: 
+            st.error("Credenciales inválidas. Verifica si hay espacios al final.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
