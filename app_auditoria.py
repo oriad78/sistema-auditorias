@@ -56,12 +56,12 @@ def validar_password(p, p_confirm):
     if not p or not p_confirm:
         return False, "Debe completar ambos campos de contraseña."
     if p != p_confirm:
-        return False, "Las contraseñas NO coinciden. Verifíquelas e intente de nuevo."
+        return False, "Las contraseñas NO coinciden."
     if len(p) < 8 or not re.search("[a-z]", p) or not re.search("[0-9]", p):
         return False, "La contraseña debe tener al menos 8 caracteres, incluyendo letras y números."
     return True, ""
 
-# --- CARGA INICIAL ---
+# --- CARGA INICIAL DE PASOS ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
         ("Aceptación/continuación", "1000", "(ISA 220, 300) Evaluar la aceptación/continuación", "Realice evaluación de riesgos."),
@@ -148,8 +148,8 @@ def vista_login():
                 try:
                     conn = get_db_connection()
                     conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (em, n, hash_pass(p1), r))
-                    conn.commit(); conn.close(); st.success("Cuenta creada con éxito.")
-                except: st.error("El email ya está registrado.")
+                    conn.commit(); conn.close(); st.success("Cuenta creada.")
+                except: st.error("El email ya existe.")
             else: st.warning(msg if not v else "Llene todos los campos.")
     with t3:
         em_rec = st.text_input("Email", key="rc1").lower().strip()
@@ -175,9 +175,9 @@ def vista_principal():
         if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
         st.markdown("### 🔗 Consultas Externas")
-        # --- LINK RUES ACTUALIZADO ---
-        st.markdown("[🔍 Consultar RUES (Directo)](https://www.rues.org.co/Consultas/ConsultasRegistros)", unsafe_allow_html=True)
-        st.markdown("[📑 Consultar RUT (DIAN)](https://muisca.dian.gov.co/WebRutMuisca/ConsultaEstadoRUT.faces)", unsafe_allow_html=True)
+        # Enlaces actualizados según peticiones
+        st.markdown("[🔍 Consultar RUES (Búsqueda Avanzada)](https://www.rues.org.co/busqueda-avanzada)", unsafe_allow_html=True)
+        st.markdown("[📑 Consultar RUT (DIAN)](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces;jsessionid=4D13ACA9FD43DD9D01CB14CEB87CC780.nodo26Rutmuisca)", unsafe_allow_html=True)
         st.divider()
         st.subheader("Nueva Empresa")
         n, nit = st.text_input("Nombre Cliente"), st.text_input("NIT")
