@@ -78,15 +78,33 @@ def create_tables():
     conn.commit()
     conn.close()
 
+# --- NUEVO: SCRIPT DE INICIALIZACIÓN (CREAR ADMIN) ---
+def crear_admin_por_defecto():
+    """Crea un usuario administrador si no existe ninguno."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Verificamos si existe el usuario admin
+    cursor.execute("SELECT * FROM users WHERE email='admin@auditpro.com'")
+    if not cursor.fetchone():
+        # Si no existe, lo creamos
+        # La contraseña será: admin123
+        pass_hash = hashlib.sha256('admin123'.encode()).hexdigest()
+        cursor.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?, ?, ?, ?)",
+                       ('admin@auditpro.com', 'Administrador Principal', pass_hash, 'Administrador'))
+        conn.commit()
+    conn.close()
+
+# Ejecutamos creación de tablas y usuario por defecto al iniciar
 create_tables()
+crear_admin_por_defecto()
 
 # --- HELPER: CARGA DE PASOS INICIALES ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
-        ("Planeación", "Aceptación", "1000", "(ISA 220, 300) Evaluar aceptación", "Realice evaluación de riesgos."),
-        ("Planeación", "Aceptación", "2000", "(ISA 220) Designar QRP", "Evaluar revisión de calidad."),
-        ("Planeación", "Ética", "4000", "(ISA 200) Requisitos éticos", "Documentar independencia."),
-        ("Planeación", "Contratación", "5000", "(ISA 210) Carta encargo", "Verificar firma representante.")
+       ("Planeación", "Aceptación", "1000", "(ISA 220, 300) Evaluar aceptación", "Realice evaluación de riesgos."),
+       ("Planeación", "Aceptación", "2000", "(ISA 220) Designar QRP", "Evaluar revisión de calidad."),
+       ("Planeación", "Ética", "4000", "(ISA 200) Requisitos éticos", "Documentar independencia."),
+       ("Planeación", "Contratación", "5000", "(ISA 210) Carta encargo", "Verificar firma representante.")
     ]
     cursor = conn.cursor()
     for p in pasos:
@@ -202,7 +220,7 @@ def modulo_importacion(client_id):
                     for _, r in df.iterrows():
                         clave = f"{r['Seccion']}|{r['Area']}|{r['Codigo']}"
                         if clave not in set_ex:
-                            cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)",
+                            cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)", 
                                            (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
                             nuevos += 1
                     conn.commit(); conn.close()
