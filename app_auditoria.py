@@ -29,6 +29,13 @@ st.markdown("""
         font-size: 12px;
         font-weight: bold;
     }
+    .trash-section {
+        background-color: #f8fafc;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px dashed #cbd5e1;
+        margin-top: 40px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -58,7 +65,7 @@ def validar_password(p, p_confirm):
     if p != p_confirm:
         return False, "Las contraseñas NO coinciden."
     if len(p) < 8 or not re.search("[a-z]", p) or not re.search("[0-9]", p):
-        return False, "La contraseña debe tener al menos 8 caracteres, incluyendo letras y números."
+        return False, "La contraseña debe tener al menos 8 caracteres (letras y números)."
     return True, ""
 
 # --- PASOS INICIALES ---
@@ -75,7 +82,7 @@ def cargar_pasos_iniciales(conn, client_id):
                        [(client_id, p[0], p[1], p[2], p[3]) for p in pasos])
     conn.commit()
 
-# --- MÓDULOS ---
+# --- MÓDULOS TÉCNICOS ---
 def modulo_materialidad(client_id):
     st.markdown("### 📊 Materialidad")
     conn = get_db_connection()
@@ -98,17 +105,18 @@ def modulo_materialidad(client_id):
         m_gen = v_base * (p_gen/100)
     
     st.metric("Mat. General", f"$ {m_gen:,.2f}")
-    if st.button("💾 Guardar"):
+    if st.button("💾 Guardar Materialidad"):
         conn = get_db_connection()
-        conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", (client_id, benchmark, v_base, p_gen, m_gen, p_perf, m_gen*(p_perf/100), p_ranr, m_gen*(p_ranr/100)))
+        conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", 
+                     (client_id, benchmark, v_base, p_gen, m_gen, p_perf, m_gen*(p_perf/100), p_ranr, m_gen*(p_ranr/100)))
         conn.commit(); conn.close(); st.success("Guardado.")
 
 def modulo_programa_trabajo(client_id):
-    st.markdown("### 📝 Programa")
+    st.markdown("### 📝 Programa de Trabajo")
     conn = get_db_connection()
     steps = pd.read_sql_query("SELECT * FROM audit_steps WHERE client_id=? AND is_deleted=0 ORDER BY section_name, CAST(step_code AS INTEGER)", conn, params=(client_id,))
     if steps.empty:
-        if st.button("Generar"): cargar_pasos_iniciales(conn, client_id); st.rerun()
+        if st.button("Generar Pasos Iniciales"): cargar_pasos_iniciales(conn, client_id); st.rerun()
         conn.close(); return
     for _, row in steps.iterrows():
         with st.expander(f"Paso {row['step_code']}: {row['description'][:50]}..."):
@@ -132,20 +140,20 @@ def vista_login():
             u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", (e, hash_pass(p))).fetchone()
             conn.close()
             if u: st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]; st.rerun()
-            else: st.error("Error.")
+            else: st.error("Credenciales incorrectas.")
     with t2:
         n = st.text_input("Nombre Completo", key="reg_nom")
         em = st.text_input("Email", key="r1").lower().strip()
         p1 = st.text_input("Crear Clave", type="password", key="r2")
         p2 = st.text_input("Confirmar Clave", type="password", key="r3")
         r = st.selectbox("Rol", ["Miembro", "Administrador"])
-        if st.button("Crear", use_container_width=True):
+        if st.button("Crear Cuenta", use_container_width=True):
             v, msg = validar_password(p1, p2)
             if v and n and em:
                 try:
-                    conn = get_db_connection(); conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (em, n, hash_pass(p1), r)); conn.commit(); conn.close(); st.success("Ok.")
-                except: st.error("Email ya existe.")
-            else: st.warning(msg if not v else "Campos vacíos.")
+                    conn = get_db_connection(); conn.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (em, n, hash_pass(p1), r)); conn.commit(); conn.close(); st.success("Creado.")
+                except: st.error("Email ya registrado.")
+            else: st.warning(msg if not v else "Llene todos los campos.")
     with t3:
         em_rec = st.text_input("Email", key="rc1").lower().strip()
         nom_rec = st.text_input("Nombre Completo", key="rc_nom")
@@ -156,18 +164,17 @@ def vista_login():
             if v:
                 conn = get_db_connection(); u = conn.execute("SELECT id FROM users WHERE email=? AND full_name=?", (em_rec, nom_rec)).fetchone()
                 if u: conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(p1_rec), u[0])); conn.commit(); st.success("Ok.")
-                else: st.error("No coinciden.")
+                else: st.error("Datos no coinciden.")
             else: st.warning(msg)
     st.markdown('</div>', unsafe_allow_html=True)
 
 # --- VISTA PRINCIPAL ---
 def vista_principal():
-    # SE DEFINE SI ES ADMIN AQUÍ PARA EL DASHBOARD
     is_admin = st.session_state.user_role == "Administrador"
 
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user_name} ({st.session_state.user_role})")
-        if st.button("Salir"): st.session_state.clear(); st.rerun()
+        if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
         st.markdown("### 🔗 Consultas")
         st.markdown("[🔍 RUES](https://www.rues.org.co/busqueda-avanzada)", unsafe_allow_html=True)
@@ -175,7 +182,7 @@ def vista_principal():
         st.divider()
         st.subheader("Nueva Empresa")
         n, nit = st.text_input("Nombre"), st.text_input("NIT")
-        if st.button("Registrar"):
+        if st.button("Registrar Cliente"):
             if n:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n, nit))
@@ -191,20 +198,45 @@ def vista_principal():
         else: modulo_materialidad(st.session_state.active_id)
     else:
         st.title("💼 Dashboard AuditPro")
-        conn = get_db_connection(); clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
+        conn = get_db_connection()
+        
+        # LISTADO DE EMPRESAS ACTIVAS
+        clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
         for _, r in clients.iterrows():
             with st.container(border=True):
-                # RESTAURADO: Columna para el botón de borrar si es admin
                 col1, col2, col3 = st.columns([4, 1, 0.5])
                 col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
                 if col2.button("Abrir", key=f"o_{r['id']}"):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
                 
-                # Botón de eliminar restaurado para administradores
                 if is_admin:
-                    if col3.button("🗑️", key=f"del_{r['id']}"):
-                        conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
+                    if col3.button("🗑️", key=f"del_btn_{r['id']}"):
+                        st.session_state[f"confirm_del_{r['id']}"] = True
+                    
+                    if st.session_state.get(f"confirm_del_{r['id']}"):
+                        st.warning(f"¿Eliminar {r['client_name']}?")
+                        if st.button("Confirmar", key=f"conf_del_{r['id']}"):
+                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
+                            conn.commit()
+                            del st.session_state[f"confirm_del_{r['id']}"]
+                            st.rerun()
+                        if st.button("Cancelar", key=f"canc_del_{r['id']}"):
+                            del st.session_state[f"confirm_del_{r['id']}"]
+                            st.rerun()
+
+        # PAPELERA DE RECICLAJE (Solo Admin)
+        if is_admin:
+            deleted_clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=1", conn)
+            if not deleted_clients.empty:
+                st.markdown('<div class="trash-section">', unsafe_allow_html=True)
+                st.subheader("♻️ Papelera de Reciclaje")
+                for _, dr in deleted_clients.iterrows():
+                    tc1, tc2 = st.columns([5, 1])
+                    tc1.write(f"{dr['client_name']} (NIT: {dr['client_nit']})")
+                    if tc2.button("Restaurar", key=f"rest_{dr['id']}"):
+                        conn.execute("UPDATE clients SET is_deleted=0 WHERE id=?", (dr['id'],))
                         conn.commit(); st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
         conn.close()
 
 if __name__ == "__main__":
