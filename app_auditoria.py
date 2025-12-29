@@ -137,7 +137,7 @@ def vista_login():
             if u: st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]; st.rerun()
             else: st.error("Error de acceso.")
     with t2:
-        n = st.text_input("Nombre Completo")
+        n = st.text_input("Nombre Completo", key="reg_nom")
         em = st.text_input("Email", key="r1").lower().strip()
         p1 = st.text_input("Crear Contraseña", type="password", key="r2")
         p2 = st.text_input("Confirmar Contraseña", type="password", key="r3")
@@ -153,7 +153,8 @@ def vista_login():
             else: st.warning(msg if not v else "Llene todos los campos.")
     with t3:
         em_rec = st.text_input("Email", key="rc1").lower().strip()
-        nom_rec = st.text_input("Nombre Completo")
+        # SE CORRIGE EL ID DUPLICADO AQUÍ AGREGANDO UN KEY ÚNICO
+        nom_rec = st.text_input("Nombre Completo", key="rc_nom")
         p1_rec = st.text_input("Nueva Clave", type="password", key="rc2")
         p2_rec = st.text_input("Confirmar Nueva Clave", type="password", key="rc3")
         if st.button("Actualizar Contraseña", use_container_width=True):
@@ -175,7 +176,6 @@ def vista_principal():
         if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
         st.divider()
         st.markdown("### 🔗 Consultas Externas")
-        # Enlaces actualizados según peticiones
         st.markdown("[🔍 Consultar RUES (Búsqueda Avanzada)](https://www.rues.org.co/busqueda-avanzada)", unsafe_allow_html=True)
         st.markdown("[📑 Consultar RUT (DIAN)](https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces;jsessionid=4D13ACA9FD43DD9D01CB14CEB87CC780.nodo26Rutmuisca)", unsafe_allow_html=True)
         st.divider()
