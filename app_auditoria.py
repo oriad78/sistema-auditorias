@@ -88,8 +88,7 @@ def create_tables():
         FOREIGN KEY(step_id) REFERENCES audit_steps(id)
     )''')
 
-    # --- NUEVA TABLA: EVIDENCIAS (NIA 500) ---
-    # Almacenamos el archivo como BLOB (Binary Large Object) directamente en la BD para portabilidad
+    # Tabla: Evidencias (NIA 500)
     cursor.execute('''CREATE TABLE IF NOT EXISTS audit_evidence (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         step_id INTEGER,
@@ -112,7 +111,7 @@ def create_tables():
 def crear_admin_por_defecto():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Aquí agregamos tu usuario y el genérico
+    # Tu usuario y el genérico
     usuarios = [
         ('admin@auditpro.com', 'Administrador Principal', 'admin123', 'Administrador'),
         ('auditgerencial.rojas@outlook.com', 'Gerencia Auditoría', 'admin123', 'Administrador')
@@ -161,7 +160,6 @@ def actualizar_paso_seguro(step_id, user_id, user_name, nuevas_notas, nuevo_esta
     conn.close(); return ret
 
 def guardar_evidencia(step_id, user_id, uploaded_file):
-    """Guarda un archivo binario en la base de datos."""
     if uploaded_file is not None:
         try:
             bytes_data = uploaded_file.getvalue()
@@ -237,10 +235,9 @@ def modulo_programa_trabajo(client_id):
                     st.markdown(f"**Procedimiento:** {row['description']}")
                     st.markdown(f'<div class="guia-box"><strong>Guía Técnica:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
                     
-                    # --- INTERFAZ PRINCIPAL DEL PASO ---
                     tabs = st.tabs(["📝 Papeles de Trabajo", "📎 Evidencias (NIA 500)", "📜 Historial"])
                     
-                    # TAB 1: NOTAS Y ESTADO
+                    # TAB 1: NOTAS
                     with tabs[0]:
                         n_nota = st.text_area("Notas:", value=row['user_notes'] or "", key=f"nt_{sid}")
                         c_e, c_b = st.columns([1, 1])
@@ -250,9 +247,9 @@ def modulo_programa_trabajo(client_id):
                                 st.success("Guardado."); st.rerun()
                             else: st.info("Sin cambios.")
                     
-                    # TAB 2: EVIDENCIAS (ARCHIVOS)
+                    # TAB 2: EVIDENCIAS
                     with tabs[1]:
-                        uploaded = st.file_uploader("Adjuntar archivo (PDF, Excel, IMG)", key=f"up_{sid}")
+                        uploaded = st.file_uploader("Adjuntar archivo", key=f"up_{sid}")
                         if uploaded and st.button("Subir Archivo", key=f"upl_{sid}"):
                             if guardar_evidencia(sid, st.session_state.user_id, uploaded):
                                 st.success("Evidencia cargada."); st.rerun()
@@ -262,23 +259,17 @@ def modulo_programa_trabajo(client_id):
                         conn_ev = get_db_connection()
                         evs = pd.read_sql_query("SELECT id, file_name, upload_date FROM audit_evidence WHERE step_id=?", conn_ev, params=(sid,))
                         conn_ev.close()
-                        
                         if not evs.empty:
                             for _, ev in evs.iterrows():
-                                c_ev1, c_ev2 = st.columns([4, 1])
-                                c_ev1.write(f"📄 {ev['file_name']} ({ev['upload_date']})")
-                                # Nota: Descargar desde BD requiere extraer BLOB. Por simplicidad mostramos lista.
-                                # Para descargar real, se necesita lógica extra de conversión binaria.
-                        else:
-                            st.caption("No hay evidencias adjuntas.")
+                                st.write(f"📄 {ev['file_name']} ({ev['upload_date']})")
+                        else: st.caption("No hay evidencias adjuntas.")
 
                     # TAB 3: HISTORIAL
                     with tabs[2]:
                         conn_log = get_db_connection()
                         logs = pd.read_sql_query("SELECT timestamp, user_name, action FROM audit_logs WHERE step_id=? ORDER BY timestamp DESC", conn_log, params=(sid,))
                         conn_log.close()
-                        if not logs.empty:
-                            st.dataframe(logs, hide_index=True)
+                        if not logs.empty: st.dataframe(logs, hide_index=True)
                         else: st.write("Sin historial.")
     conn.close()
 
@@ -339,6 +330,13 @@ def vista_principal():
         else: modulo_materialidad(st.session_state.active_id)
     else:
         st.title("💼 Mis Auditorías")
+        
+        # --- ENLACES EXTERNOS RESTAURADOS ---
+        c1, c2 = st.columns(2)
+        c1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
+        c2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
+        st.divider()
+        
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
         for _, r in clients.iterrows():
