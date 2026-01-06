@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 import io
+import datetime
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AuditPro - Sistema Integral", layout="wide")
@@ -56,13 +57,10 @@ def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Tabla Usuarios
+    # Tablas Base
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT, role TEXT DEFAULT "Miembro")')
-    
-    # Tabla Clientes
     cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, is_deleted INTEGER DEFAULT 0)')
     
-    # Tabla Pasos de Auditoría
     cursor.execute('''CREATE TABLE IF NOT EXISTS audit_steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         client_id INTEGER, 
@@ -75,10 +73,9 @@ def create_tables():
         status TEXT DEFAULT "Sin Iniciar", 
         is_deleted INTEGER DEFAULT 0)''')
     
-    # Tabla Materialidad
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
-    # --- NUEVA TABLA: LOGS DE AUDITORÍA (NIA 230) ---
+    # Tabla: Logs de Auditoría (NIA 230)
     cursor.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         step_id INTEGER,
@@ -90,46 +87,47 @@ def create_tables():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(step_id) REFERENCES audit_steps(id)
     )''')
+
+    # --- NUEVA TABLA: EVIDENCIAS (NIA 500) ---
+    # Almacenamos el archivo como BLOB (Binary Large Object) directamente en la BD para portabilidad
+    cursor.execute('''CREATE TABLE IF NOT EXISTS audit_evidence (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        step_id INTEGER,
+        user_id INTEGER,
+        file_name TEXT,
+        file_type TEXT,
+        file_data BLOB,
+        upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(step_id) REFERENCES audit_steps(id)
+    )''')
     
-    # Migraciones para compatibilidad
-    try:
-        cursor.execute("ALTER TABLE audit_steps ADD COLUMN area_name TEXT DEFAULT 'General'")
-    except:
-        pass
+    # Migraciones silenciosas
+    try: cursor.execute("ALTER TABLE audit_steps ADD COLUMN area_name TEXT DEFAULT 'General'")
+    except: pass
         
     conn.commit()
     conn.close()
 
-# --- SCRIPT DE INICIALIZACIÓN (USUARIOS AUTORIZADOS) ---
+# --- SCRIPT DE INICIALIZACIÓN (USUARIOS) ---
 def crear_admin_por_defecto():
-    """Crea usuarios iniciales si no existen."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Lista de usuarios a autorizar (Email, Nombre, Clave, Rol)
-    usuarios_iniciales = [
+    # Aquí agregamos tu usuario y el genérico
+    usuarios = [
         ('admin@auditpro.com', 'Administrador Principal', 'admin123', 'Administrador'),
-        ('auditgerencial.rojas@outlook.com', 'Gerencia de Auditoría', 'admin123', 'Administrador') 
+        ('auditgerencial.rojas@outlook.com', 'Gerencia Auditoría', 'admin123', 'Administrador')
     ]
-    
-    for email, nombre, clave_plana, rol in usuarios_iniciales:
-        # Verificamos si el usuario ya existe
+    for email, nombre, clave, rol in usuarios:
         cursor.execute("SELECT * FROM users WHERE email=?", (email,))
         if not cursor.fetchone():
-            # Si no existe, lo creamos con hash SHA256
-            pass_hash = hashlib.sha256(clave_plana.encode()).hexdigest()
-            cursor.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?, ?, ?, ?)",
-                           (email, nombre, pass_hash, rol))
-            print(f"Usuario creado: {email}") # Log en consola para confirmar
-            
-    conn.commit()
-    conn.close()
-# Ejecutamos creación de tablas y usuario por defecto al iniciar
+            ph = hashlib.sha256(clave.encode()).hexdigest()
+            cursor.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?,?,?,?)", (email, nombre, ph, rol))
+    conn.commit(); conn.close()
+
 create_tables()
 crear_admin_por_defecto()
 
-# --- LÓGICA DE NEGOCIO Y HELPERS ---
-
+# --- LÓGICA DE NEGOCIO ---
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
        ("Planeación", "Aceptación", "1000", "(ISA 220, 300) Evaluar aceptación", "Realice evaluación de riesgos."),
@@ -143,50 +141,39 @@ def cargar_pasos_iniciales(conn, client_id):
     conn.commit()
 
 def actualizar_paso_seguro(step_id, user_id, user_name, nuevas_notas, nuevo_estado):
-    """
-    Actualiza un paso de auditoría y registra el cambio en el histórico (Audit Trail).
-    Cumple con NIA 230 sobre la evidencia de modificaciones.
-    """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # 1. Obtener estado actual (antes del cambio)
+    conn = get_db_connection(); cursor = conn.cursor()
     cursor.execute("SELECT user_notes, status FROM audit_steps WHERE id=?", (step_id,))
     actual = cursor.fetchone()
-    if not actual:
-        conn.close()
-        return False
-        
-    notas_antiguas = actual[0] if actual[0] else ""
-    estado_antiguo = actual[1]
+    if not actual: return False
     
-    # 2. Detectar cambios
+    n_ant, e_ant = actual[0] or "", actual[1]
     cambios = []
-    # Normalizamos para evitar falsos positivos por espacios
-    if (notas_antiguas or "").strip() != (nuevas_notas or "").strip():
-        cambios.append("Notas actualizadas")
-    if estado_antiguo != nuevo_estado:
-        cambios.append(f"Estado: {estado_antiguo} -> {nuevo_estado}")
-        
+    if (n_ant.strip() != nuevas_notas.strip()): cambios.append("Notas actualizadas")
+    if e_ant != nuevo_estado: cambios.append(f"Estado: {e_ant} -> {nuevo_estado}")
+    
     if cambios:
-        # 3. Actualizar registro principal
-        cursor.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", 
-                       (nuevas_notas, nuevo_estado, step_id))
-        
-        # 4. Insertar en Log
-        descripcion_cambio = " | ".join(cambios)
-        cursor.execute("""
-            INSERT INTO audit_logs (step_id, user_id, user_name, action, previous_value, new_value)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (step_id, user_id, user_name, descripcion_cambio, notas_antiguas[:50]+"...", nuevas_notas[:50]+"..."))
-        
-        conn.commit()
-        retorno = True
-    else:
-        retorno = False
-        
-    conn.close()
-    return retorno
+        cursor.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (nuevas_notas, nuevo_estado, step_id))
+        desc = " | ".join(cambios)
+        cursor.execute("INSERT INTO audit_logs (step_id, user_id, user_name, action, previous_value, new_value) VALUES (?,?,?,?,?,?)", 
+                       (step_id, user_id, user_name, desc, n_ant[:50], nuevas_notas[:50]))
+        conn.commit(); ret = True
+    else: ret = False
+    conn.close(); return ret
+
+def guardar_evidencia(step_id, user_id, uploaded_file):
+    """Guarda un archivo binario en la base de datos."""
+    if uploaded_file is not None:
+        try:
+            bytes_data = uploaded_file.getvalue()
+            conn = get_db_connection()
+            conn.execute("INSERT INTO audit_evidence (step_id, user_id, file_name, file_type, file_data) VALUES (?,?,?,?,?)",
+                         (step_id, user_id, uploaded_file.name, uploaded_file.type, bytes_data))
+            conn.commit(); conn.close()
+            return True
+        except Exception as e:
+            st.error(f"Error al subir: {e}")
+            return False
+    return False
 
 # --- MÓDULOS ---
 def modulo_materialidad(client_id):
@@ -228,122 +215,101 @@ def modulo_programa_trabajo(client_id):
 
     if steps.empty:
         st.info("No hay pasos. Use el módulo de importación.")
-        conn.close()
-        return
+        conn.close(); return
 
     c_f1, c_f2 = st.columns([2, 1])
-    search = c_f1.text_input("🔍 Buscar por descripción o código:", "")
-    sec_options = ["Todas"] + sorted(list(steps['section_name'].unique()))
-    seccion_f = c_f2.selectbox("📁 Filtrar por Sección:", sec_options)
+    search = c_f1.text_input("🔍 Buscar:", "")
+    seccion_f = c_f2.selectbox("📁 Sección:", ["Todas"] + sorted(list(steps['section_name'].unique())))
 
     df_f = steps.copy()
-    if search:
-        df_f = df_f[df_f['description'].str.contains(search, case=False) | df_f['step_code'].str.contains(search, case=False)]
-    if seccion_f != "Todas":
-        df_f = df_f[df_f['section_name'] == seccion_f]
+    if search: df_f = df_f[df_f['description'].str.contains(search, case=False) | df_f['step_code'].str.contains(search, case=False)]
+    if seccion_f != "Todas": df_f = df_f[df_f['section_name'] == seccion_f]
 
-    # Renderizado: JERARQUÍA -> ÁREA (Expander Principal) -> PASOS (Sub-Expanders)
     for area in df_f['area_name'].unique():
         st.markdown(f'<div class="area-header">📍 Área: {area}</div>', unsafe_allow_html=True)
         with st.expander(f"Ver procedimientos de {area}", expanded=True):
-            subset_area = df_f[df_f['area_name'] == area]
-            
-            for _, row in subset_area.iterrows():
+            subset = df_f[df_f['area_name'] == area]
+            for _, row in subset.iterrows():
                 sid = row['id']
-                status_icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
+                icon = "⚪" if row['status'] == "Sin Iniciar" else "🟡" if row['status'] == "En Proceso" else "🟢"
                 
-                with st.expander(f"{status_icon} [{row['step_code']}] - {row['description'][:100]}..."):
+                with st.expander(f"{icon} [{row['step_code']}] - {row['description'][:90]}..."):
                     st.markdown(f"**Procedimiento:** {row['description']}")
-                    st.markdown(f'<div class="guia-box"><strong>Guía Técnica / Instrucciones:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="guia-box"><strong>Guía Técnica:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
                     
-                    # --- ÁREA DE TRABAJO MEJORADA (CON AUDIT TRAIL) ---
-                    c_input, c_hist = st.columns([3, 1])
-
-                    with c_input:
-                        n_nota = st.text_area("Conclusiones y evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=120)
-                        col_e, col_b = st.columns([1, 1])
-                        n_est = col_e.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}", label_visibility="collapsed")
+                    # --- INTERFAZ PRINCIPAL DEL PASO ---
+                    tabs = st.tabs(["📝 Papeles de Trabajo", "📎 Evidencias (NIA 500)", "📜 Historial"])
+                    
+                    # TAB 1: NOTAS Y ESTADO
+                    with tabs[0]:
+                        n_nota = st.text_area("Notas:", value=row['user_notes'] or "", key=f"nt_{sid}")
+                        c_e, c_b = st.columns([1, 1])
+                        n_est = c_e.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
+                        if c_b.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
+                            if actualizar_paso_seguro(sid, st.session_state.user_id, st.session_state.user_name, n_nota, n_est):
+                                st.success("Guardado."); st.rerun()
+                            else: st.info("Sin cambios.")
+                    
+                    # TAB 2: EVIDENCIAS (ARCHIVOS)
+                    with tabs[1]:
+                        uploaded = st.file_uploader("Adjuntar archivo (PDF, Excel, IMG)", key=f"up_{sid}")
+                        if uploaded and st.button("Subir Archivo", key=f"upl_{sid}"):
+                            if guardar_evidencia(sid, st.session_state.user_id, uploaded):
+                                st.success("Evidencia cargada."); st.rerun()
                         
-                        if col_b.button("💾 Guardar Cambios", key=f"btn_{sid}", use_container_width=True):
-                            # LLAMADA A LA NUEVA FUNCIÓN SEGURA
-                            cambio_realizado = actualizar_paso_seguro(
-                                sid, 
-                                st.session_state.user_id, 
-                                st.session_state.user_name, 
-                                n_nota, 
-                                n_est
-                            )
-                            if cambio_realizado:
-                                st.success("Guardado y registrado en bitácora.")
-                                st.rerun() # Recargar para ver cambios
-                            else:
-                                st.info("No se detectaron cambios para guardar.")
+                        st.divider()
+                        st.write("**Archivos Adjuntos:**")
+                        conn_ev = get_db_connection()
+                        evs = pd.read_sql_query("SELECT id, file_name, upload_date FROM audit_evidence WHERE step_id=?", conn_ev, params=(sid,))
+                        conn_ev.close()
+                        
+                        if not evs.empty:
+                            for _, ev in evs.iterrows():
+                                c_ev1, c_ev2 = st.columns([4, 1])
+                                c_ev1.write(f"📄 {ev['file_name']} ({ev['upload_date']})")
+                                # Nota: Descargar desde BD requiere extraer BLOB. Por simplicidad mostramos lista.
+                                # Para descargar real, se necesita lógica extra de conversión binaria.
+                        else:
+                            st.caption("No hay evidencias adjuntas.")
 
-                    with c_hist:
-                        st.write("") # Espaciador
-                        st.write("") 
-                        # Botón para ver historial (Audit Trail)
-                        with st.popover("📜 Ver Historial"):
-                            conn_log = get_db_connection()
-                            logs = pd.read_sql_query("SELECT timestamp, user_name, action, previous_value FROM audit_logs WHERE step_id=? ORDER BY timestamp DESC", conn_log, params=(sid,))
-                            conn_log.close()
-                            
-                            if not logs.empty:
-                                for _, l in logs.iterrows():
-                                    st.markdown(f"**{l['timestamp']}**")
-                                    st.caption(f"Por: {l['user_name']}")
-                                    st.info(f"{l['action']}")
-                                    st.divider()
-                            else:
-                                st.write("Sin cambios registrados.")
+                    # TAB 3: HISTORIAL
+                    with tabs[2]:
+                        conn_log = get_db_connection()
+                        logs = pd.read_sql_query("SELECT timestamp, user_name, action FROM audit_logs WHERE step_id=? ORDER BY timestamp DESC", conn_log, params=(sid,))
+                        conn_log.close()
+                        if not logs.empty:
+                            st.dataframe(logs, hide_index=True)
+                        else: st.write("Sin historial.")
     conn.close()
 
 def modulo_importacion(client_id):
     st.markdown("### 📥 Importar Pasos")
     st.markdown("#### 1. Obtener Plantilla")
-    p_data = {
-        'Seccion': ['Activo', 'Pasivo'],
-        'Area': ['Caja', 'Proveedores'],
-        'Codigo': ['101', '201'],
-        'Descripcion': ['Arqueo de caja', 'Confirmación de saldos'],
-        'Instrucciones': ['NIA 500', 'NIA 505']
-    }
-    df_p = pd.DataFrame(p_data)
-    csv_p = df_p.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("⬇️ Descargar Formato CSV", data=csv_p, file_name="plantilla_auditpro.csv", mime="text/csv")
+    p_data = {'Seccion': ['Activo', 'Pasivo'], 'Area': ['Caja', 'Proveedores'], 'Codigo': ['101', '201'], 'Descripcion': ['Arqueo de caja', 'Confirmación saldos'], 'Instrucciones': ['NIA 500', 'NIA 505']}
+    st.download_button("⬇️ Descargar CSV", data=pd.DataFrame(p_data).to_csv(index=False).encode('utf-8-sig'), file_name="plantilla.csv", mime="text/csv")
     
     st.divider()
-    st.markdown("#### 2. Subir Archivo")
-    up = st.file_uploader("Subir Excel o CSV", type=['xlsx', 'csv'])
-    if up:
+    up = st.file_uploader("Subir Excel/CSV", type=['xlsx', 'csv'])
+    if up and st.button("🚀 Procesar"):
         try:
             df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
-            req = ['Seccion', 'Area', 'Codigo', 'Descripcion', 'Instrucciones']
-            if all(c in df.columns for c in req):
-                st.dataframe(df.head(3))
-                if st.button("🚀 Procesar e Importar"):
-                    conn = get_db_connection(); cursor = conn.cursor()
-                    existentes = pd.read_sql_query("SELECT section_name, area_name, step_code FROM audit_steps WHERE client_id=? AND is_deleted=0", conn, params=(client_id,))
-                    set_ex = set(existentes['section_name'].astype(str) + "|" + existentes['area_name'].astype(str) + "|" + existentes['step_code'].astype(str))
-                    
-                    nuevos = 0
-                    for _, r in df.iterrows():
-                        clave = f"{r['Seccion']}|{r['Area']}|{r['Codigo']}"
-                        if clave not in set_ex:
-                            cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)", 
-                                           (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
-                            nuevos += 1
-                    conn.commit(); conn.close()
-                    st.success(f"Se importaron {nuevos} pasos correctamente.")
-            else:
-                st.error(f"El archivo debe contener las columnas: {req}")
-        except Exception as e:
-            st.error(f"Error: {e}")
+            conn = get_db_connection(); cursor = conn.cursor()
+            existentes = pd.read_sql_query("SELECT step_code FROM audit_steps WHERE client_id=?", conn, params=(client_id,))
+            set_ex = set(existentes['step_code'].astype(str))
+            
+            nuevos = 0
+            for _, r in df.iterrows():
+                if str(r['Codigo']) not in set_ex:
+                    cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?,?,?,?,?,?)", 
+                                   (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
+                    nuevos += 1
+            conn.commit(); conn.close()
+            st.success(f"Importados: {nuevos}")
+        except Exception as e: st.error(f"Error: {e}")
 
 # --- VISTAS PRINCIPALES ---
 def vista_principal():
     is_admin = "Administrador" in st.session_state.get('user_role', "Miembro")
-
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user_name}")
         st.markdown(f"<span class='admin-badge'>{st.session_state.user_role}</span>", unsafe_allow_html=True)
@@ -352,72 +318,56 @@ def vista_principal():
         st.subheader("Nueva Auditoría")
         n_name = st.text_input("Nombre Empresa")
         n_nit = st.text_input("NIT")
-        if st.button("Crear Cliente"):
-            if n_name:
-                conn = get_db_connection(); cur = conn.cursor()
-                cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
-                cur.lastrowid
-                cargar_pasos_iniciales(conn, cur.lastrowid)
-                conn.commit(); conn.close(); st.rerun()
+        if st.button("Crear Cliente") and n_name:
+            conn = get_db_connection(); cur = conn.cursor()
+            cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
+            lid = cur.lastrowid
+            cargar_pasos_iniciales(conn, lid)
+            conn.commit(); conn.close(); st.rerun()
 
     if 'active_id' in st.session_state:
-        if st.button("⬅️ Volver al Panel"): del st.session_state.active_id; st.rerun()
+        if st.button("⬅️ Volver"): del st.session_state.active_id; st.rerun()
         st.title(f"📂 {st.session_state.active_name}")
+        col_menu = st.columns(3)
+        if col_menu[0].button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
+        if col_menu[1].button("📝 Programa", use_container_width=True): st.session_state.mod = "Prog"
+        if col_menu[2].button("📥 Importar", use_container_width=True): st.session_state.mod = "Imp"
         
-        m1, m2, m3 = st.columns(3)
-        if m1.button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
-        if m2.button("📝 Programa de Trabajo", use_container_width=True): st.session_state.mod = "Prog"
-        if m3.button("📥 Importar Pasos", use_container_width=True): st.session_state.mod = "Imp"
-        
-        if st.session_state.get('mod') == "Prog": modulo_programa_trabajo(st.session_state.active_id)
-        elif st.session_state.get('mod') == "Imp": modulo_importacion(st.session_state.active_id)
+        mod = st.session_state.get('mod', 'Prog')
+        if mod == "Prog": modulo_programa_trabajo(st.session_state.active_id)
+        elif mod == "Imp": modulo_importacion(st.session_state.active_id)
         else: modulo_materialidad(st.session_state.active_id)
     else:
         st.title("💼 Mis Auditorías")
-        c1, c2 = st.columns(2)
-        c1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
-        c2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
-        st.divider()
-        
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT * FROM clients WHERE is_deleted=0", conn)
         for _, r in clients.iterrows():
             with st.container(border=True):
-                col1, col2, col3 = st.columns([4, 1.5, 0.5])
-                col1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
-                if col2.button("Abrir Auditoría", key=f"op_{r['id']}", use_container_width=True):
-                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']
-                    st.rerun()
+                c1, c2, c3 = st.columns([4, 1.5, 0.5])
+                c1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
+                if c2.button("Abrir", key=f"op_{r['id']}", use_container_width=True):
+                    st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
                 if is_admin:
-                    with col3.popover("🗑️"):
-                        if st.button("Confirmar", key=f"del_{r['id']}"):
-                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],))
-                            conn.commit(); st.rerun()
+                    with c3.popover("🗑️"):
+                        if st.button("X", key=f"del_{r['id']}"):
+                            conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
         conn.close()
 
 def vista_login():
     st.markdown('<div class="login-card"><h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
     e = st.text_input("Usuario (Email)")
     p = st.text_input("Clave", type="password")
-    
     if st.button("Acceder", use_container_width=True):
-        # LIMPIEZA AUTOMÁTICA DE ESPACIOS Y MAYÚSCULAS
-        email_clean = e.strip().lower() 
-        pass_clean = p.strip()
-        
         conn = get_db_connection()
         u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", 
-                         (email_clean, hashlib.sha256(pass_clean.encode()).hexdigest())).fetchone()
+                         (e.strip().lower(), hashlib.sha256(p.strip().encode()).hexdigest())).fetchone()
         conn.close()
-        
         if u:
             st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
             st.rerun()
-        else: 
-            st.error("Credenciales inválidas. Verifica si hay espacios al final.")
+        else: st.error("Acceso denegado.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
-
