@@ -57,7 +57,6 @@ def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Tablas Base
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT, role TEXT DEFAULT "Miembro")')
     cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, is_deleted INTEGER DEFAULT 0)')
     
@@ -75,7 +74,6 @@ def create_tables():
     
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
-    # Tabla: Logs de Auditoría (NIA 230)
     cursor.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         step_id INTEGER,
@@ -88,7 +86,6 @@ def create_tables():
         FOREIGN KEY(step_id) REFERENCES audit_steps(id)
     )''')
 
-    # Tabla: Evidencias (NIA 500)
     cursor.execute('''CREATE TABLE IF NOT EXISTS audit_evidence (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         step_id INTEGER,
@@ -100,18 +97,16 @@ def create_tables():
         FOREIGN KEY(step_id) REFERENCES audit_steps(id)
     )''')
     
-    # Migraciones silenciosas
     try: cursor.execute("ALTER TABLE audit_steps ADD COLUMN area_name TEXT DEFAULT 'General'")
     except: pass
         
     conn.commit()
     conn.close()
 
-# --- SCRIPT DE INICIALIZACIÓN (USUARIOS) ---
+# --- SCRIPT DE INICIALIZACIÓN ---
 def crear_admin_por_defecto():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Tu usuario y el genérico
     usuarios = [
         ('admin@auditpro.com', 'Administrador Principal', 'admin123', 'Administrador'),
         ('auditgerencial.rojas@outlook.com', 'Gerencia Auditoría', 'admin123', 'Administrador')
@@ -172,6 +167,15 @@ def guardar_evidencia(step_id, user_id, uploaded_file):
             st.error(f"Error al subir: {e}")
             return False
     return False
+
+def eliminar_evidencia(file_id):
+    """Elimina una evidencia física de la BD."""
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM audit_evidence WHERE id=?", (file_id,))
+        conn.commit()
+    except: pass
+    finally: conn.close()
 
 # --- MÓDULOS ---
 def modulo_materialidad(client_id):
@@ -255,13 +259,30 @@ def modulo_programa_trabajo(client_id):
                                 st.success("Evidencia cargada."); st.rerun()
                         
                         st.divider()
-                        st.write("**Archivos Adjuntos:**")
                         conn_ev = get_db_connection()
-                        evs = pd.read_sql_query("SELECT id, file_name, upload_date FROM audit_evidence WHERE step_id=?", conn_ev, params=(sid,))
+                        # Cargamos tambien el BLOB (file_data) para permitir descarga
+                        evs = pd.read_sql_query("SELECT id, file_name, file_type, file_data, upload_date FROM audit_evidence WHERE step_id=?", conn_ev, params=(sid,))
                         conn_ev.close()
+                        
                         if not evs.empty:
+                            st.write("**Archivos Adjuntos:**")
                             for _, ev in evs.iterrows():
-                                st.write(f"📄 {ev['file_name']} ({ev['upload_date']})")
+                                c_info, c_down, c_del = st.columns([3, 1, 1])
+                                c_info.write(f"📄 {ev['file_name']}")
+                                
+                                # Botón Descargar
+                                c_down.download_button(
+                                    label="⬇️", 
+                                    data=ev['file_data'], 
+                                    file_name=ev['file_name'], 
+                                    mime=ev['file_type'], 
+                                    key=f"dl_{ev['id']}"
+                                )
+                                
+                                # Botón Eliminar
+                                if c_del.button("🗑️", key=f"del_ev_{ev['id']}"):
+                                    eliminar_evidencia(ev['id'])
+                                    st.rerun()
                         else: st.caption("No hay evidencias adjuntas.")
 
                     # TAB 3: HISTORIAL
@@ -331,7 +352,6 @@ def vista_principal():
     else:
         st.title("💼 Mis Auditorías")
         
-        # --- ENLACES EXTERNOS RESTAURADOS ---
         c1, c2 = st.columns(2)
         c1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
         c2.link_button("🏢 Consultar RUES", "https://www.rues.org.co/busqueda-avanzada", use_container_width=True)
