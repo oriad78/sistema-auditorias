@@ -100,19 +100,30 @@ def create_tables():
     conn.commit()
     conn.close()
 
-# --- SCRIPT DE INICIALIZACIÓN (CREAR ADMIN) ---
+# --- SCRIPT DE INICIALIZACIÓN (USUARIOS AUTORIZADOS) ---
 def crear_admin_por_defecto():
-    """Crea un usuario administrador si no existe ninguno."""
+    """Crea usuarios iniciales si no existen."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE email='admin@auditpro.com'")
-    if not cursor.fetchone():
-        pass_hash = hashlib.sha256('admin123'.encode()).hexdigest()
-        cursor.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?, ?, ?, ?)",
-                       ('admin@auditpro.com', 'Administrador Principal', pass_hash, 'Administrador'))
-        conn.commit()
+    
+    # Lista de usuarios a autorizar (Email, Nombre, Clave, Rol)
+    usuarios_iniciales = [
+        ('admin@auditpro.com', 'Administrador Principal', 'admin123', 'Administrador'),
+        ('auditgerencial.rojas@outlook.com', 'Gerencia de Auditoría', 'admin123', 'Administrador') 
+    ]
+    
+    for email, nombre, clave_plana, rol in usuarios_iniciales:
+        # Verificamos si el usuario ya existe
+        cursor.execute("SELECT * FROM users WHERE email=?", (email,))
+        if not cursor.fetchone():
+            # Si no existe, lo creamos con hash SHA256
+            pass_hash = hashlib.sha256(clave_plana.encode()).hexdigest()
+            cursor.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?, ?, ?, ?)",
+                           (email, nombre, pass_hash, rol))
+            print(f"Usuario creado: {email}") # Log en consola para confirmar
+            
+    conn.commit()
     conn.close()
-
 # Ejecutamos creación de tablas y usuario por defecto al iniciar
 create_tables()
 crear_admin_por_defecto()
@@ -409,3 +420,4 @@ def vista_login():
 if __name__ == "__main__":
     if 'user_id' not in st.session_state: vista_login()
     else: vista_principal()
+
