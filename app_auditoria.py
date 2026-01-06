@@ -21,6 +21,8 @@ st.markdown("""
     }
     .main-title { color: #1e3a8a; font-weight: 700; text-align: center; }
     .stButton>button { border-radius: 8px; transition: all 0.3s; }
+    /* Botones de alerta en rojo suave */
+    .delete-btn { color: #dc2626; font-weight: bold; }
     .admin-badge {
         background-color: #fee2e2;
         color: #dc2626;
@@ -169,7 +171,6 @@ def guardar_evidencia(step_id, user_id, uploaded_file):
     return False
 
 def eliminar_evidencia(file_id):
-    """Elimina una evidencia física de la BD."""
     conn = get_db_connection()
     try:
         conn.execute("DELETE FROM audit_evidence WHERE id=?", (file_id,))
@@ -202,12 +203,14 @@ def modulo_materialidad(client_id):
         m_ranr = m_gen * (p_ranr / 100)
     
     st.columns(3)[0].metric("Mat. General", f"$ {m_gen:,.2f}")
-    if st.button("💾 Guardar Materialidad"):
+    
+    # Botón descriptivo
+    if st.button("💾 Guardar Cálculo de Materialidad", use_container_width=True):
         conn = get_db_connection()
         conn.execute("INSERT OR REPLACE INTO materiality VALUES (?,?,?,?,?,?,?,?,?)", 
                      (client_id, benchmark, valor_base, p_gen, m_gen, p_perf, m_perf, p_ranr, m_ranr))
         conn.commit(); conn.close()
-        st.success("Guardado.")
+        st.success("Configuración de materialidad guardada correctamente.")
 
 def modulo_programa_trabajo(client_id):
     st.markdown("### 📝 Programa de Trabajo")
@@ -220,8 +223,8 @@ def modulo_programa_trabajo(client_id):
         conn.close(); return
 
     c_f1, c_f2 = st.columns([2, 1])
-    search = c_f1.text_input("🔍 Buscar:", "")
-    seccion_f = c_f2.selectbox("📁 Sección:", ["Todas"] + sorted(list(steps['section_name'].unique())))
+    search = c_f1.text_input("🔍 Buscar Procedimiento:", "")
+    seccion_f = c_f2.selectbox("📁 Filtrar Sección:", ["Todas"] + sorted(list(steps['section_name'].unique())))
 
     df_f = steps.copy()
     if search: df_f = df_f[df_f['description'].str.contains(search, case=False) | df_f['step_code'].str.contains(search, case=False)]
@@ -239,70 +242,76 @@ def modulo_programa_trabajo(client_id):
                     st.markdown(f"**Procedimiento:** {row['description']}")
                     st.markdown(f'<div class="guia-box"><strong>Guía Técnica:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
                     
-                    tabs = st.tabs(["📝 Papeles de Trabajo", "📎 Evidencias (NIA 500)", "📜 Historial"])
+                    tabs = st.tabs(["📝 Papeles de Trabajo", "📎 Evidencias (NIA 500)", "📜 Historial de Cambios"])
                     
                     # TAB 1: NOTAS
                     with tabs[0]:
-                        n_nota = st.text_area("Notas:", value=row['user_notes'] or "", key=f"nt_{sid}")
+                        n_nota = st.text_area("Conclusiones del Auditor:", value=row['user_notes'] or "", key=f"nt_{sid}")
                         c_e, c_b = st.columns([1, 1])
-                        n_est = c_e.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
-                        if c_b.button("💾 Guardar Avance", key=f"btn_{sid}", use_container_width=True):
+                        n_est = c_e.selectbox("Estado del Procedimiento", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
+                        
+                        # Botón Descriptivo
+                        if c_b.button("💾 Registrar Avance y Notas", key=f"btn_{sid}", use_container_width=True):
                             if actualizar_paso_seguro(sid, st.session_state.user_id, st.session_state.user_name, n_nota, n_est):
-                                st.success("Guardado."); st.rerun()
-                            else: st.info("Sin cambios.")
+                                st.success("Avance registrado exitosamente."); st.rerun()
+                            else: st.info("No se detectaron cambios nuevos para guardar.")
                     
                     # TAB 2: EVIDENCIAS
                     with tabs[1]:
-                        uploaded = st.file_uploader("Adjuntar archivo", key=f"up_{sid}")
-                        if uploaded and st.button("Subir Archivo", key=f"upl_{sid}"):
+                        uploaded = st.file_uploader("Seleccionar archivo de soporte", key=f"up_{sid}")
+                        # Botón Descriptivo
+                        if uploaded and st.button("☁️ Cargar Evidencia al Servidor", key=f"upl_{sid}"):
                             if guardar_evidencia(sid, st.session_state.user_id, uploaded):
-                                st.success("Evidencia cargada."); st.rerun()
+                                st.success("Archivo subido y encriptado correctamente."); st.rerun()
                         
                         st.divider()
                         conn_ev = get_db_connection()
-                        # Cargamos tambien el BLOB (file_data) para permitir descarga
                         evs = pd.read_sql_query("SELECT id, file_name, file_type, file_data, upload_date FROM audit_evidence WHERE step_id=?", conn_ev, params=(sid,))
                         conn_ev.close()
                         
                         if not evs.empty:
                             st.write("**Archivos Adjuntos:**")
                             for _, ev in evs.iterrows():
-                                c_info, c_down, c_del = st.columns([3, 1, 1])
+                                c_info, c_down, c_del = st.columns([3, 1.2, 0.8])
                                 c_info.write(f"📄 {ev['file_name']}")
                                 
-                                # Botón Descargar
+                                # Botón Descarga
                                 c_down.download_button(
-                                    label="⬇️", 
+                                    label="⬇️ Descargar", 
                                     data=ev['file_data'], 
                                     file_name=ev['file_name'], 
                                     mime=ev['file_type'], 
                                     key=f"dl_{ev['id']}"
                                 )
                                 
-                                # Botón Eliminar
-                                if c_del.button("🗑️", key=f"del_ev_{ev['id']}"):
-                                    eliminar_evidencia(ev['id'])
-                                    st.rerun()
-                        else: st.caption("No hay evidencias adjuntas.")
+                                # SEGURIDAD: Botón Eliminar con confirmación (Popover)
+                                with c_del.popover("🗑️", help="Eliminar archivo permanentemente"):
+                                    st.markdown("⚠️ **¿Estás seguro?**")
+                                    st.caption("Esta acción no se puede deshacer.")
+                                    if st.button("Sí, Eliminar", key=f"confirm_del_{ev['id']}", type="primary"):
+                                        eliminar_evidencia(ev['id'])
+                                        st.rerun()
+                        else: st.caption("No hay evidencias adjuntas para este paso.")
 
                     # TAB 3: HISTORIAL
                     with tabs[2]:
                         conn_log = get_db_connection()
                         logs = pd.read_sql_query("SELECT timestamp, user_name, action FROM audit_logs WHERE step_id=? ORDER BY timestamp DESC", conn_log, params=(sid,))
                         conn_log.close()
-                        if not logs.empty: st.dataframe(logs, hide_index=True)
-                        else: st.write("Sin historial.")
+                        if not logs.empty: st.dataframe(logs, hide_index=True, use_container_width=True)
+                        else: st.write("No hay historial de modificaciones.")
     conn.close()
 
 def modulo_importacion(client_id):
-    st.markdown("### 📥 Importar Pasos")
-    st.markdown("#### 1. Obtener Plantilla")
+    st.markdown("### 📥 Importación Masiva")
+    st.markdown("#### 1. Descargar Formato")
     p_data = {'Seccion': ['Activo', 'Pasivo'], 'Area': ['Caja', 'Proveedores'], 'Codigo': ['101', '201'], 'Descripcion': ['Arqueo de caja', 'Confirmación saldos'], 'Instrucciones': ['NIA 500', 'NIA 505']}
-    st.download_button("⬇️ Descargar CSV", data=pd.DataFrame(p_data).to_csv(index=False).encode('utf-8-sig'), file_name="plantilla.csv", mime="text/csv")
+    st.download_button("⬇️ Obtener Plantilla CSV", data=pd.DataFrame(p_data).to_csv(index=False).encode('utf-8-sig'), file_name="plantilla_auditpro.csv", mime="text/csv")
     
     st.divider()
-    up = st.file_uploader("Subir Excel/CSV", type=['xlsx', 'csv'])
-    if up and st.button("🚀 Procesar"):
+    st.markdown("#### 2. Carga de Datos")
+    up = st.file_uploader("Seleccione su archivo Excel o CSV", type=['xlsx', 'csv'])
+    if up and st.button("🚀 Procesar e Importar Datos", use_container_width=True):
         try:
             df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
             conn = get_db_connection(); cursor = conn.cursor()
@@ -316,8 +325,8 @@ def modulo_importacion(client_id):
                                    (client_id, r['Seccion'], r['Area'], r['Codigo'], r['Descripcion'], r['Instrucciones']))
                     nuevos += 1
             conn.commit(); conn.close()
-            st.success(f"Importados: {nuevos}")
-        except Exception as e: st.error(f"Error: {e}")
+            st.success(f"Proceso completado: Se importaron {nuevos} nuevos procedimientos.")
+        except Exception as e: st.error(f"Error en el archivo: {e}")
 
 # --- VISTAS PRINCIPALES ---
 def vista_principal():
@@ -325,12 +334,12 @@ def vista_principal():
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user_name}")
         st.markdown(f"<span class='admin-badge'>{st.session_state.user_role}</span>", unsafe_allow_html=True)
-        if st.button("Cerrar Sesión"): st.session_state.clear(); st.rerun()
+        if st.button("🔒 Cerrar Sesión Segura"): st.session_state.clear(); st.rerun()
         st.divider()
-        st.subheader("Nueva Auditoría")
-        n_name = st.text_input("Nombre Empresa")
-        n_nit = st.text_input("NIT")
-        if st.button("Crear Cliente") and n_name:
+        st.subheader("Alta de Clientes")
+        n_name = st.text_input("Razón Social / Empresa")
+        n_nit = st.text_input("NIT / Identificación")
+        if st.button("✅ Registrar Nuevo Cliente") and n_name:
             conn = get_db_connection(); cur = conn.cursor()
             cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
             lid = cur.lastrowid
@@ -338,19 +347,19 @@ def vista_principal():
             conn.commit(); conn.close(); st.rerun()
 
     if 'active_id' in st.session_state:
-        if st.button("⬅️ Volver"): del st.session_state.active_id; st.rerun()
-        st.title(f"📂 {st.session_state.active_name}")
+        if st.button("⬅️ Volver al Panel Principal"): del st.session_state.active_id; st.rerun()
+        st.title(f"📂 Auditoría: {st.session_state.active_name}")
         col_menu = st.columns(3)
-        if col_menu[0].button("📊 Materialidad", use_container_width=True): st.session_state.mod = "Mat"
-        if col_menu[1].button("📝 Programa", use_container_width=True): st.session_state.mod = "Prog"
-        if col_menu[2].button("📥 Importar", use_container_width=True): st.session_state.mod = "Imp"
+        if col_menu[0].button("📊 Definir Materialidad", use_container_width=True): st.session_state.mod = "Mat"
+        if col_menu[1].button("📝 Ejecutar Programa", use_container_width=True): st.session_state.mod = "Prog"
+        if col_menu[2].button("📥 Importar Pasos", use_container_width=True): st.session_state.mod = "Imp"
         
         mod = st.session_state.get('mod', 'Prog')
         if mod == "Prog": modulo_programa_trabajo(st.session_state.active_id)
         elif mod == "Imp": modulo_importacion(st.session_state.active_id)
         else: modulo_materialidad(st.session_state.active_id)
     else:
-        st.title("💼 Mis Auditorías")
+        st.title("💼 Mis Auditorías Asignadas")
         
         c1, c2 = st.columns(2)
         c1.link_button("🌐 Consultar RUT (DIAN)", "https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces", use_container_width=True)
@@ -363,19 +372,25 @@ def vista_principal():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([4, 1.5, 0.5])
                 c1.write(f"**{r['client_name']}** | NIT: {r['client_nit']}")
-                if c2.button("Abrir", key=f"op_{r['id']}", use_container_width=True):
+                
+                # Botón Descriptivo
+                if c2.button("📂 Gestionar Auditoría", key=f"op_{r['id']}", use_container_width=True):
                     st.session_state.active_id, st.session_state.active_name = r['id'], r['client_name']; st.rerun()
+                
                 if is_admin:
-                    with c3.popover("🗑️"):
-                        if st.button("X", key=f"del_{r['id']}"):
+                    # SEGURIDAD: Popover de confirmación para eliminar cliente
+                    with c3.popover("🗑️", help="Eliminar Cliente"):
+                        st.markdown(f"⚠️ **¿Eliminar {r['client_name']}?**")
+                        st.caption("Se ocultará de la lista.")
+                        if st.button("Confirmar Eliminación", key=f"del_cli_{r['id']}", type="primary"):
                             conn.execute("UPDATE clients SET is_deleted=1 WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
         conn.close()
 
 def vista_login():
     st.markdown('<div class="login-card"><h1 class="main-title">⚖️ AuditPro</h1>', unsafe_allow_html=True)
-    e = st.text_input("Usuario (Email)")
-    p = st.text_input("Clave", type="password")
-    if st.button("Acceder", use_container_width=True):
+    e = st.text_input("Correo Corporativo")
+    p = st.text_input("Contraseña", type="password")
+    if st.button("🔐 Iniciar Sesión Segura", use_container_width=True):
         conn = get_db_connection()
         u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", 
                          (e.strip().lower(), hashlib.sha256(p.strip().encode()).hexdigest())).fetchone()
@@ -383,7 +398,7 @@ def vista_login():
         if u:
             st.session_state.user_id, st.session_state.user_name, st.session_state.user_role = u[0], u[1], u[2]
             st.rerun()
-        else: st.error("Acceso denegado.")
+        else: st.error("Acceso denegado. Verifique sus credenciales.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
