@@ -55,8 +55,14 @@ def get_db_connection():
 def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # Tabla Usuarios
     cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, full_name TEXT, password_hash TEXT, role TEXT DEFAULT "Miembro")')
+    
+    # Tabla Clientes
     cursor.execute('CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, client_name TEXT, client_nit TEXT, is_deleted INTEGER DEFAULT 0)')
+    
+    # Tabla Pasos de Auditoría
     cursor.execute('''CREATE TABLE IF NOT EXISTS audit_steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         client_id INTEGER, 
@@ -68,8 +74,24 @@ def create_tables():
         user_notes TEXT, 
         status TEXT DEFAULT "Sin Iniciar", 
         is_deleted INTEGER DEFAULT 0)''')
+    
+    # Tabla Materialidad
     cursor.execute('CREATE TABLE IF NOT EXISTS materiality (client_id INTEGER PRIMARY KEY, benchmark TEXT, benchmark_value REAL, p_general REAL, mat_general REAL, p_performance REAL, mat_performance REAL, p_ranr REAL, mat_ranr REAL)')
     
+    # --- NUEVA TABLA: LOGS DE AUDITORÍA (NIA 230) ---
+    cursor.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        step_id INTEGER,
+        user_id INTEGER,
+        user_name TEXT,
+        action TEXT,
+        previous_value TEXT,
+        new_value TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(step_id) REFERENCES audit_steps(id)
+    )''')
+    
+    # Migraciones para compatibilidad
     try:
         cursor.execute("ALTER TABLE audit_steps ADD COLUMN area_name TEXT DEFAULT 'General'")
     except:
@@ -83,10 +105,8 @@ def crear_admin_por_defecto():
     """Crea un usuario administrador si no existe ninguno."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Verificamos si existe el usuario admin
     cursor.execute("SELECT * FROM users WHERE email='admin@auditpro.com'")
     if not cursor.fetchone():
-        # Si no existe, lo creamos
         pass_hash = hashlib.sha256('admin123'.encode()).hexdigest()
         cursor.execute("INSERT INTO users (email, full_name, password_hash, role) VALUES (?, ?, ?, ?)",
                        ('admin@auditpro.com', 'Administrador Principal', pass_hash, 'Administrador'))
@@ -97,7 +117,8 @@ def crear_admin_por_defecto():
 create_tables()
 crear_admin_por_defecto()
 
-# --- HELPER: CARGA DE PASOS INICIALES ---
+# --- LÓGICA DE NEGOCIO Y HELPERS ---
+
 def cargar_pasos_iniciales(conn, client_id):
     pasos = [
        ("Planeación", "Aceptación", "1000", "(ISA 220, 300) Evaluar aceptación", "Realice evaluación de riesgos."),
@@ -109,6 +130,52 @@ def cargar_pasos_iniciales(conn, client_id):
     for p in pasos:
         cursor.execute("INSERT INTO audit_steps (client_id, section_name, area_name, step_code, description, instructions) VALUES (?, ?, ?, ?, ?, ?)", (client_id, p[0], p[1], p[2], p[3], p[4]))
     conn.commit()
+
+def actualizar_paso_seguro(step_id, user_id, user_name, nuevas_notas, nuevo_estado):
+    """
+    Actualiza un paso de auditoría y registra el cambio en el histórico (Audit Trail).
+    Cumple con NIA 230 sobre la evidencia de modificaciones.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. Obtener estado actual (antes del cambio)
+    cursor.execute("SELECT user_notes, status FROM audit_steps WHERE id=?", (step_id,))
+    actual = cursor.fetchone()
+    if not actual:
+        conn.close()
+        return False
+        
+    notas_antiguas = actual[0] if actual[0] else ""
+    estado_antiguo = actual[1]
+    
+    # 2. Detectar cambios
+    cambios = []
+    # Normalizamos para evitar falsos positivos por espacios
+    if (notas_antiguas or "").strip() != (nuevas_notas or "").strip():
+        cambios.append("Notas actualizadas")
+    if estado_antiguo != nuevo_estado:
+        cambios.append(f"Estado: {estado_antiguo} -> {nuevo_estado}")
+        
+    if cambios:
+        # 3. Actualizar registro principal
+        cursor.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", 
+                       (nuevas_notas, nuevo_estado, step_id))
+        
+        # 4. Insertar en Log
+        descripcion_cambio = " | ".join(cambios)
+        cursor.execute("""
+            INSERT INTO audit_logs (step_id, user_id, user_name, action, previous_value, new_value)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (step_id, user_id, user_name, descripcion_cambio, notas_antiguas[:50]+"...", nuevas_notas[:50]+"..."))
+        
+        conn.commit()
+        retorno = True
+    else:
+        retorno = False
+        
+    conn.close()
+    return retorno
 
 # --- MÓDULOS ---
 def modulo_materialidad(client_id):
@@ -178,13 +245,46 @@ def modulo_programa_trabajo(client_id):
                     st.markdown(f"**Procedimiento:** {row['description']}")
                     st.markdown(f'<div class="guia-box"><strong>Guía Técnica / Instrucciones:</strong><br>{row["instructions"]}</div>', unsafe_allow_html=True)
                     
-                    n_nota = st.text_area("Conclusiones y evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=120)
-                    col_e, col_b = st.columns([1, 1])
-                    n_est = col_e.selectbox("Estado del paso", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}")
-                    if col_b.button("💾 Actualizar Paso", key=f"btn_{sid}", use_container_width=True):
-                        conn.execute("UPDATE audit_steps SET user_notes=?, status=? WHERE id=?", (n_nota, n_est, sid))
-                        conn.commit()
-                        st.toast(f"Paso {row['step_code']} guardado.")
+                    # --- ÁREA DE TRABAJO MEJORADA (CON AUDIT TRAIL) ---
+                    c_input, c_hist = st.columns([3, 1])
+
+                    with c_input:
+                        n_nota = st.text_area("Conclusiones y evidencia:", value=row['user_notes'] or "", key=f"nt_{sid}", height=120)
+                        col_e, col_b = st.columns([1, 1])
+                        n_est = col_e.selectbox("Estado", opciones_estado, index=opciones_estado.index(row['status'] if row['status'] in opciones_estado else "Sin Iniciar"), key=f"es_{sid}", label_visibility="collapsed")
+                        
+                        if col_b.button("💾 Guardar Cambios", key=f"btn_{sid}", use_container_width=True):
+                            # LLAMADA A LA NUEVA FUNCIÓN SEGURA
+                            cambio_realizado = actualizar_paso_seguro(
+                                sid, 
+                                st.session_state.user_id, 
+                                st.session_state.user_name, 
+                                n_nota, 
+                                n_est
+                            )
+                            if cambio_realizado:
+                                st.success("Guardado y registrado en bitácora.")
+                                st.rerun() # Recargar para ver cambios
+                            else:
+                                st.info("No se detectaron cambios para guardar.")
+
+                    with c_hist:
+                        st.write("") # Espaciador
+                        st.write("") 
+                        # Botón para ver historial (Audit Trail)
+                        with st.popover("📜 Ver Historial"):
+                            conn_log = get_db_connection()
+                            logs = pd.read_sql_query("SELECT timestamp, user_name, action, previous_value FROM audit_logs WHERE step_id=? ORDER BY timestamp DESC", conn_log, params=(sid,))
+                            conn_log.close()
+                            
+                            if not logs.empty:
+                                for _, l in logs.iterrows():
+                                    st.markdown(f"**{l['timestamp']}**")
+                                    st.caption(f"Por: {l['user_name']}")
+                                    st.info(f"{l['action']}")
+                                    st.divider()
+                            else:
+                                st.write("Sin cambios registrados.")
     conn.close()
 
 def modulo_importacion(client_id):
@@ -245,6 +345,7 @@ def vista_principal():
             if n_name:
                 conn = get_db_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO clients (user_id, client_name, client_nit) VALUES (?,?,?)", (st.session_state.user_id, n_name, n_nit))
+                cur.lastrowid
                 cargar_pasos_iniciales(conn, cur.lastrowid)
                 conn.commit(); conn.close(); st.rerun()
 
@@ -295,7 +396,7 @@ def vista_login():
         
         conn = get_db_connection()
         u = conn.execute("SELECT id, full_name, role FROM users WHERE email=? AND password_hash=?", 
-                        (email_clean, hashlib.sha256(pass_clean.encode()).hexdigest())).fetchone()
+                         (email_clean, hashlib.sha256(pass_clean.encode()).hexdigest())).fetchone()
         conn.close()
         
         if u:
